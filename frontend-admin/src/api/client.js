@@ -107,4 +107,10 @@ export const api = {
   },
   getViolations: () => apiRequest('/analytics/violations'),
   getVehiclePerformance: () => apiRequest('/analytics/vehicle-performance'),
+
+  // Traffic & Diagnostics
+  getTrafficStatus: () => apiRequest('/traffic/status'),
+  refreshTraffic: () => apiRequest('/traffic/refresh', { method: 'POST' }),
+  getHealth: () => apiRequest('/health'),
+  getDbHealth: () => apiRequest('/health/db'),
 };

@@ -40,6 +40,7 @@ if missing_vars:
     )
 
 # DB import deferred until after env validation above
+import asyncio
 from app.db import apply_collection_validators, ping_db  # noqa: E402
 from app.routers import (  # noqa: E402
     analytics_router,
@@ -48,10 +49,12 @@ from app.routers import (  # noqa: E402
     driver_router,
     parcels_router,
     routing_sessions_router,
+    traffic_router,
     vehicles_router,
     warehouses_router,
     websocket_router,
 )
+from app.traffic import get_traffic_manager  # noqa: E402
 
 
 @asynccontextmanager
@@ -62,8 +65,10 @@ async def lifespan(application: FastAPI):
     On startup:
       - Verifies MongoDB connectivity (fails fast with a clear error if unreachable).
       - Applies $jsonSchema validators to all 5 core collections (idempotent).
+      - Starts the continuous TomTom traffic background polling loop.
 
     On shutdown:
+      - Cancels the traffic refresh loop.
       - Motor handles connection pool closure.
     """
     try:
@@ -74,7 +79,22 @@ async def lifespan(application: FastAPI):
         ) from exc
 
     await apply_collection_validators()
+
+    # Start background TomTom traffic refresh loop
+    traffic_manager = get_traffic_manager()
+    stop_event = asyncio.Event()
+    traffic_task = asyncio.create_task(traffic_manager.start_loop(stop_event=stop_event))
+
     yield
+
+    # Shutdown
+    stop_event.set()
+    traffic_manager.stop_loop()
+    traffic_task.cancel()
+    try:
+        await traffic_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(
@@ -149,6 +169,7 @@ app.include_router(warehouses_router)
 app.include_router(parcels_router)
 app.include_router(vehicles_router)
 app.include_router(routing_sessions_router)
+app.include_router(traffic_router)
 app.include_router(delivery_events_router)
 app.include_router(driver_router)
 app.include_router(analytics_router)

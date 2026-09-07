@@ -34,6 +34,11 @@ class TrafficCache:
         """Current operational traffic source: 'live' | 'cached' | 'simulated_fallback'."""
         return self._traffic_source
 
+    @property
+    def last_cycle_timestamp(self) -> float | None:
+        """Timestamp of the most recent cycle execution."""
+        return self._last_cycle_timestamp
+
     def is_cold_start(self) -> bool:
         """Check if cache has never received any live readings."""
         return len(self._readings) == 0
