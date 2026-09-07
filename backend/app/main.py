@@ -5,7 +5,7 @@ Configures:
 - Lifespan management (MongoDB connectivity check and $jsonSchema application)
 - CORS locked to known frontend origins (admin: 5173, driver: 5174)
 - Consistent error response formatting ({"error": "...", "detail": "..."})
-- Core REST API routers: Warehouses, Parcels, Vehicles, Routing Sessions
+- Core REST API routers: Auth, Warehouses, Parcels, Vehicles, Routing Sessions, Delivery Events, Driver
 """
 
 from __future__ import annotations
@@ -42,6 +42,9 @@ if missing_vars:
 # DB import deferred until after env validation above
 from app.db import apply_collection_validators, ping_db  # noqa: E402
 from app.routers import (  # noqa: E402
+    auth_router,
+    delivery_events_router,
+    driver_router,
     parcels_router,
     routing_sessions_router,
     vehicles_router,
@@ -138,8 +141,11 @@ async def health_db():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
 
-# Core Routers
+# Registered Routers
+app.include_router(auth_router)
 app.include_router(warehouses_router)
 app.include_router(parcels_router)
 app.include_router(vehicles_router)
 app.include_router(routing_sessions_router)
+app.include_router(delivery_events_router)
+app.include_router(driver_router)
