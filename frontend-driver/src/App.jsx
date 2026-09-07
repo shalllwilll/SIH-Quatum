@@ -1,21 +1,30 @@
-import React from 'react'
-import './App.css'
+import React, { useState } from 'react';
+import { DriverAuthProvider, useDriverAuth } from './context/AuthContext';
+import Login from './pages/Login';
+import Layout from './pages/Layout';
+import AssignedRoute from './pages/AssignedRoute';
+import LiveMap from './pages/LiveMap';
 
-function App() {
+function DriverMain() {
+  const { isAuthenticated } = useDriverAuth();
+  const [activeTab, setActiveTab] = useState('itinerary');
+
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
   return (
-    <div className="driver-app">
-      <header className="driver-header">
-        <h1>Driver App</h1>
-        <p className="badge">Route & Delivery View</p>
-      </header>
-      <main className="driver-main">
-        <div className="card">
-          <h2>Assigned Route</h2>
-          <p>Driver terminal initialized. Awaiting route dispatch.</p>
-        </div>
-      </main>
-    </div>
-  )
+    <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+      {activeTab === 'itinerary' && <AssignedRoute />}
+      {activeTab === 'map' && <LiveMap />}
+    </Layout>
+  );
 }
 
-export default App
+export default function App() {
+  return (
+    <DriverAuthProvider>
+      <DriverMain />
+    </DriverAuthProvider>
+  );
+}
