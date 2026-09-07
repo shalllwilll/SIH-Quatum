@@ -1,0 +1,30 @@
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes (undefined names, unused imports)
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade (modernise Python syntax)
+    "B",   # flake8-bugbear (likely bugs and design issues)
+]
+ignore = [
+    "E501",  # line length — handled by formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+filterwarnings = [
+    # Internal anyio/starlette deprecation — not our code; suppress until libs update
+    "ignore::DeprecationWarning:anyio.*",
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore::DeprecationWarning:fastapi.*",
+]
