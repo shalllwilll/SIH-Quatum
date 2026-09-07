@@ -1,10 +1,9 @@
 """
-backend/app/traffic/propagate.py — Milestone 5.1
+backend/app/traffic/propagate.py — Milestone 5.1 (Optimized with scipy.spatial.cKDTree)
 
 Congestion propagation module per spec §3c:
 Propagates real-time / cached congestion ratios from ~70 representative arterial segments
-to all other road network edges using deterministic nearest-neighbor spatial proximity
-and road-class matching.
+to all other road network edges using spatial KD-tree proximity and road-class matching.
 """
 
 from __future__ import annotations
@@ -12,6 +11,9 @@ from __future__ import annotations
 import logging
 import math
 from typing import Any
+
+import numpy as np
+from scipy.spatial import cKDTree
 
 from app.traffic.tomtom_client import FlowSegmentReading
 
@@ -33,6 +35,16 @@ def _haversine_distance_km(lon1: float, lat1: float, lon2: float, lat2: float) -
     return r * c
 
 
+def _coords_to_cartesian(lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """Convert spherical lat/lon in degrees to 3D Cartesian points on unit sphere for exact KD-tree searching."""
+    rad_lat = np.radians(lats)
+    rad_lon = np.radians(lons)
+    x = np.cos(rad_lat) * np.cos(rad_lon)
+    y = np.cos(rad_lat) * np.sin(rad_lon)
+    z = np.sin(rad_lat)
+    return np.column_stack((x, y, z))
+
+
 def find_nearest_representative_segment(
     lon: float,
     lat: float,
@@ -44,14 +56,6 @@ def find_nearest_representative_segment(
     Deterministic tie-breaking rule:
     If two segments are within 1e-4 km distance, select the one with
     the lexicographically lower segment_id.
-
-    Args:
-        lon: Longitude of target point.
-        lat: Latitude of target point.
-        readings: List of representative segment traffic readings.
-
-    Returns:
-        Nearest FlowSegmentReading.
     """
     if not readings:
         raise ValueError("Cannot propagate from an empty list of representative readings.")
@@ -61,12 +65,10 @@ def find_nearest_representative_segment(
 
     for reading in readings:
         dist = _haversine_distance_km(lon, lat, reading.lon, reading.lat)
-        # Check if strictly closer or tie-breaker
         if dist < best_dist - 1e-4:
             best_dist = dist
             best_reading = reading
         elif abs(dist - best_dist) <= 1e-4:
-            # Deterministic tie-breaking on segment_id
             if reading.segment_id < best_reading.segment_id:
                 best_dist = dist
                 best_reading = reading
@@ -79,7 +81,8 @@ def propagate_congestion_to_graph(
     readings: list[FlowSegmentReading],
 ) -> int:
     """
-    Propagate representative traffic readings to all edges in a NetworkX/OSMnx MultiDiGraph.
+    Propagate representative traffic readings to all edges in a NetworkX/OSMnx MultiDiGraph
+    using a spatial cKDTree index for O(|E| log |S|) batch throughput.
 
     Tags each edge in-place with:
       - congestion_ratio: float (multiplicative factor >= 1.0)
@@ -98,20 +101,37 @@ def propagate_congestion_to_graph(
         log.warning("No traffic readings available to propagate.")
         return 0
 
-    edge_count = 0
-    for _u, _v, _k, data in graph.edges(keys=True, data=True):
-        # Extract edge coordinate (use start node or midpoint)
+    # 1. Build 3D spatial KD-Tree over representative readings
+    reading_lats = np.array([r.lat for r in readings], dtype=np.float64)
+    reading_lons = np.array([r.lon for r in readings], dtype=np.float64)
+    reading_pts = _coords_to_cartesian(reading_lats, reading_lons)
+    tree = cKDTree(reading_pts)
+
+    # 2. Extract edge coordinates in batch
+    edge_list = list(graph.edges(keys=True, data=True))
+    if not edge_list:
+        return 0
+
+    edge_lats = []
+    edge_lons = []
+    for _u, _v, _k, _data in edge_list:
         u_node = graph.nodes.get(_u, {})
-        lon = float(u_node.get("x", 73.8567))
-        lat = float(u_node.get("y", 18.5204))
+        edge_lons.append(float(u_node.get("x", 73.8567)))
+        edge_lats.append(float(u_node.get("y", 18.5204)))
 
-        nearest_seg = find_nearest_representative_segment(lon, lat, readings)
+    edge_pts = _coords_to_cartesian(np.array(edge_lats), np.array(edge_lons))
 
-        data["congestion_ratio"] = nearest_seg.congestion_ratio
+    # 3. Vectorized nearest-neighbor query across all edges
+    _distances, nearest_indices = tree.query(edge_pts, k=1)
+
+    # 4. Tag edge attributes in-place
+    for i, (_u, _v, _k, data) in enumerate(edge_list):
+        matched_reading = readings[nearest_indices[i]]
+        data["congestion_ratio"] = matched_reading.congestion_ratio
         data["congestion_type"] = "multiplicative"
-        data["traffic_source"] = nearest_seg.source
-        data["associated_segment_id"] = nearest_seg.segment_id
-        edge_count += 1
+        data["traffic_source"] = matched_reading.source
+        data["associated_segment_id"] = matched_reading.segment_id
 
-    log.info("Propagated congestion across %d graph edges from %d representative segments.", edge_count, len(readings))
+    edge_count = len(edge_list)
+    log.info("Propagated congestion across %d graph edges via cKDTree index in batch mode.", edge_count)
     return edge_count

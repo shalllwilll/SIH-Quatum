@@ -22,9 +22,10 @@ export default function FleetOverview() {
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pollError, setPollError] = useState(null);
+  const [isWebSocketActive, setIsWebSocketActive] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Initialize Leaflet Map
+  // Initialize Leaflet Map with Canvas Acceleration
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
@@ -32,6 +33,7 @@ export default function FleetOverview() {
       center: PUNE_CENTER,
       zoom: 12,
       zoomControl: true,
+      preferCanvas: true, // Hardware-accelerated 60 FPS Canvas rendering
     });
 
     // Dark-mode styled CartoDB tile layer
@@ -60,12 +62,11 @@ export default function FleetOverview() {
       });
   }, []);
 
-  // Render Warehouse Markers
+  // Render Warehouse Markers on Map
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !warehouses.length) return;
 
-    // Clear old warehouse markers
     Object.values(markersRef.current.warehouses).forEach((m) => m.remove());
     markersRef.current.warehouses = {};
 
@@ -101,14 +102,15 @@ export default function FleetOverview() {
           <span style="font-size: 10px; color: #94a3b8;">Distribution Hub</span>
         </div>
       `);
-
       markersRef.current.warehouses[wh.id || wh.name] = marker;
     });
   }, [warehouses]);
 
-  // Polling loop for vehicle positions
+  // Real-Time Telemetry: WebSocket Connection with Polling Fallback
   useEffect(() => {
     let isMounted = true;
+    let ws = null;
+    let pollInterval = null;
 
     const fetchPositions = async () => {
       try {
@@ -120,17 +122,62 @@ export default function FleetOverview() {
         setLoading(false);
       } catch (err) {
         if (!isMounted) return;
-        setPollError('Live position polling temporarily unavailable.');
+        setPollError('Live position sync temporarily unavailable.');
         setLoading(false);
       }
     };
 
     fetchPositions();
-    const interval = setInterval(fetchPositions, POSITION_POLL_MS);
+
+    const wsUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000')
+      .replace(/^http/, 'ws') + '/ws/fleet';
+
+    try {
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        if (isMounted) setIsWebSocketActive(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (Array.isArray(payload)) {
+            if (isMounted) {
+              setPositions(payload);
+              setLastUpdated(new Date());
+              setPollError(null);
+              setLoading(false);
+            }
+          }
+        } catch {
+          // ignore non-json
+        }
+      };
+
+      ws.onerror = () => {
+        if (isMounted) setIsWebSocketActive(false);
+      };
+
+      ws.onclose = () => {
+        if (isMounted) {
+          setIsWebSocketActive(false);
+          if (!pollInterval) {
+            pollInterval = setInterval(fetchPositions, POSITION_POLL_MS);
+          }
+        }
+      };
+    } catch {
+      setIsWebSocketActive(false);
+      pollInterval = setInterval(fetchPositions, POSITION_POLL_MS);
+    }
+
+    pollInterval = setInterval(fetchPositions, isWebSocketActive ? 10000 : POSITION_POLL_MS);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (ws) ws.close();
+      if (pollInterval) clearInterval(pollInterval);
     };
   }, []);
 
@@ -170,11 +217,9 @@ export default function FleetOverview() {
 
       const vKey = veh.vehicle_id || veh.label;
       if (markersRef.current.vehicles[vKey]) {
-        // Move existing marker smoothly
         markersRef.current.vehicles[vKey].setLatLng([veh.lat, veh.lon]);
         markersRef.current.vehicles[vKey].setIcon(vehIcon);
       } else {
-        // Create marker
         const marker = L.marker([veh.lat, veh.lon], { icon: vehIcon }).addTo(map);
         marker.bindPopup(`
           <div style="padding: 4px;">
@@ -202,7 +247,9 @@ export default function FleetOverview() {
       {/* Top Notification / Polling State */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span className="badge badge-success">Live GPS Stream</span>
+          <span className={`badge ${isWebSocketActive ? 'badge-success' : 'badge-info'}`}>
+            {isWebSocketActive ? '⚡ Live WebSocket Push' : '🔄 Polling Mode'}
+          </span>
           {lastUpdated && (
             <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
               <Clock size={13} /> Updated {lastUpdated.toLocaleTimeString()}

@@ -33,6 +33,7 @@ export default function RouteMap({
       center: PUNE_CENTER,
       zoom: 12,
       zoomControl: true,
+      preferCanvas: true, // Hardware-accelerated Canvas polyline rendering
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {

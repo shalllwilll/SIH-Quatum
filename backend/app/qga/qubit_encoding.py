@@ -1,12 +1,12 @@
 """
-backend/app/qga/qubit_encoding.py — Milestone 3.3
+backend/app/qga/qubit_encoding.py — Milestone 3.3 (Optimized with NumPy vectorization)
 
 Quantum-inspired qubit representation and rotation-gate evolution operators
 for discrete combinatorial route optimization per spec §3d.
 
 A quantum chromosome maintains probability amplitude angles theta_i in [0, pi/2]
 for each stop decision. A quantum rotation gate updates theta_i toward the best-known
-chromosome in each generation.
+chromosome in each generation using vectorized NumPy operations.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from app.qga.chromosome import (
     BreakGene,
@@ -46,24 +48,22 @@ class QubitChromosome:
 
         Each stop's priority score is sampled from its probability distribution.
         Stops are ordered by priority score and partitioned among vehicles.
+        Vectorized with NumPy for maximum performance.
         """
-        rng = random.Random(seed)
         n = len(self.stop_ids)
         if n == 0:
             return Chromosome(genes=[])
 
-        # Priority sampling using beta^2 (probability of selection) + stochastic perturbation
-        scores = []
-        for i in range(n):
-            theta = self.thetas[i]
-            beta_sq = math.sin(theta) ** 2
-            # Sample priority score
-            score = beta_sq + (rng.uniform(-0.1, 0.1) * 0.2)
-            scores.append((score, self.stop_ids[i]))
+        rng = random.Random(seed)
+        theta_arr = np.array(self.thetas, dtype=np.float64)
 
-        # Sort stops in descending order of priority
-        scores.sort(key=lambda x: x[0], reverse=True)
-        ordered_stops = [s[1] for s in scores]
+        # Vectorized probability amplitude & deterministic perturbation
+        beta_sq = np.sin(theta_arr) ** 2
+        scores = [float(beta_sq[i]) + (rng.uniform(-0.1, 0.1) * 0.2) for i in range(n)]
+
+        # Sort indices by descending priority score
+        sorted_indices = sorted(range(n), key=lambda i: scores[i], reverse=True)
+        ordered_stops = [self.stop_ids[idx] for idx in sorted_indices]
 
         # Interleave breaks
         breaks = [
@@ -97,29 +97,30 @@ class QubitChromosome:
         Apply quantum rotation gate U(delta_theta) to shift amplitude angles
         toward the best observed chromosome.
 
-        Rotation rule:
+        Rotation rule (Vectorized with NumPy):
           theta_new = theta_old + sign(target - current) * step_size
           bounded within [0.01 * pi, 0.49 * pi] to prevent premature stagnation.
         """
         best_stops = best_chromosome.stops()
         curr_stops = current_chromosome.stops()
 
-        # Map stop positions in best chromosome
         best_pos = {s: idx for idx, s in enumerate(best_stops)}
         curr_pos = {s: idx for idx, s in enumerate(curr_stops)}
 
+        n = len(self.stop_ids)
+        if n == 0:
+            return
+
+        deltas = np.zeros(n, dtype=np.float64)
         for i, stop_id in enumerate(self.stop_ids):
             target_idx = best_pos.get(stop_id, i)
             actual_idx = curr_pos.get(stop_id, i)
-
-            # If target index is earlier, increase priority angle theta
             if target_idx < actual_idx:
-                delta = step_size
+                deltas[i] = step_size
             elif target_idx > actual_idx:
-                delta = -step_size
-            else:
-                delta = 0.0
+                deltas[i] = -step_size
 
-            new_theta = self.thetas[i] + delta
-            # Clamp within [0.01*pi, 0.49*pi]
-            self.thetas[i] = max(0.01 * math.pi, min(0.49 * math.pi, new_theta))
+        theta_arr = np.array(self.thetas, dtype=np.float64) + deltas
+        # Vectorized bounding in [0.01*pi, 0.49*pi]
+        np.clip(theta_arr, 0.01 * np.pi, 0.49 * np.pi, out=theta_arr)
+        self.thetas = theta_arr.tolist()

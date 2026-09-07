@@ -28,6 +28,8 @@ export default function LiveMap() {
   const [pollError, setPollError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
+  const [isWebSocketActive, setIsWebSocketActive] = useState(false);
+
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
@@ -36,6 +38,7 @@ export default function LiveMap() {
       center: PUNE_CENTER,
       zoom: 13,
       zoomControl: true,
+      preferCanvas: true, // Hardware-accelerated Canvas rendering
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -59,9 +62,11 @@ export default function LiveMap() {
       .catch((err) => console.warn('Could not load driver manifest:', err));
   }, []);
 
-  // Polling driver vehicle position
+  // Telemetry Sync: WebSocket stream with polling fallback
   useEffect(() => {
     let isMounted = true;
+    let ws = null;
+    let pollInterval = null;
 
     const fetchPos = async () => {
       try {
@@ -73,19 +78,65 @@ export default function LiveMap() {
         setLoading(false);
       } catch (err) {
         if (!isMounted) return;
-        setPollError('Position update unavailable');
+        setPollError('Position sync temporarily unavailable');
         setLoading(false);
       }
     };
 
     fetchPos();
-    const interval = setInterval(fetchPos, POSITION_POLL_MS);
+
+    const driverId = user?.username || 'driver1';
+    const wsUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000')
+      .replace(/^http/, 'ws') + `/ws/driver/${driverId}`;
+
+    try {
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        if (isMounted) setIsWebSocketActive(true);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload && payload.lat && payload.lon) {
+            if (isMounted) {
+              setPosition(payload);
+              setLastUpdated(new Date());
+              setPollError(null);
+              setLoading(false);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      ws.onerror = () => {
+        if (isMounted) setIsWebSocketActive(false);
+      };
+
+      ws.onclose = () => {
+        if (isMounted) {
+          setIsWebSocketActive(false);
+          if (!pollInterval) {
+            pollInterval = setInterval(fetchPos, POSITION_POLL_MS);
+          }
+        }
+      };
+    } catch {
+      setIsWebSocketActive(false);
+      pollInterval = setInterval(fetchPos, POSITION_POLL_MS);
+    }
+
+    pollInterval = setInterval(fetchPos, isWebSocketActive ? 10000 : POSITION_POLL_MS);
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (ws) ws.close();
+      if (pollInterval) clearInterval(pollInterval);
     };
-  }, []);
+  }, [user]);
 
   // Update Route Polyline & Stops on Map
   useEffect(() => {

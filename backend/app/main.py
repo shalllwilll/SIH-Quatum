@@ -50,6 +50,7 @@ from app.routers import (  # noqa: E402
     routing_sessions_router,
     vehicles_router,
     warehouses_router,
+    websocket_router,
 )
 
 
@@ -151,3 +152,4 @@ app.include_router(routing_sessions_router)
 app.include_router(delivery_events_router)
 app.include_router(driver_router)
 app.include_router(analytics_router)
+app.include_router(websocket_router)

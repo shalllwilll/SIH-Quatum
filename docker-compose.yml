@@ -25,6 +25,7 @@ services:
       - "8000:8000"
     environment:
       - MONGO_URI=mongodb://mongodb:27017/logistics_db
+      - VALHALLA_URL=http://valhalla:8002
       - APP_ENV=production
       - JWT_SECRET=abraxas_production_jwt_secret_key_demo_2026
       - CLOCK_ACCELERATION_RATIO=60.0
@@ -33,6 +34,21 @@ services:
       mongodb:
         condition: service_healthy
 
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: abraxas-valhalla
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - build_elevation=False
+      - build_admins=False
+      - use_tiles_ignore_pbf=True
+    volumes:
+      - valhalla_tiles:/custom_files
+
 volumes:
   mongo_data:
+    driver: local
+  valhalla_tiles:
     driver: local

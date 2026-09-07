@@ -1,5 +1,5 @@
 """
-backend/app/qpso/particle.py — Milestone 4.1
+backend/app/qpso/particle.py — Milestone 4.1 (Optimized with NumPy vectorization)
 
 Quantum-behaved Particle Swarm Optimization (QPSO) particle encoding
 and delta-potential well position update rule per spec §3d.
@@ -7,9 +7,9 @@ and delta-potential well position update rule per spec §3d.
 
 from __future__ import annotations
 
-import math
-import random
 from dataclasses import dataclass, field
+
+import numpy as np
 
 
 @dataclass
@@ -31,12 +31,9 @@ class QPSOParticle:
     def clamp_position(self) -> None:
         """Enforce strict warehouse operating hour bounds on particle position."""
         min_bound, max_bound = self.bounds
-        for d in range(len(self.position)):
-            val = self.position[d]
-            if not math.isfinite(val):
-                self.position[d] = min_bound
-            else:
-                self.position[d] = max(min_bound, min(max_bound, val))
+        pos_arr = np.nan_to_num(np.array(self.position, dtype=np.float64), nan=min_bound, posinf=max_bound, neginf=min_bound)
+        np.clip(pos_arr, min_bound, max_bound, out=pos_arr)
+        self.position = pos_arr.tolist()
 
     def update_pbest(self, current_fitness: float) -> bool:
         """
@@ -59,7 +56,7 @@ class QPSOParticle:
         seed: int | None = None,
     ) -> None:
         """
-        Quantum delta-potential well position update rule:
+        Quantum delta-potential well position update rule (Vectorized with NumPy):
           p_{d} = phi_{d} * pbest_{d} + (1 - phi_{d}) * gbest_{d}
           x_{d} = p_{d} +/- beta * |mbest_{d} - x_{d}| * ln(1 / u_{d})
 
@@ -69,35 +66,36 @@ class QPSOParticle:
             beta: Contraction-expansion coefficient (typically in [0.5, 1.0]).
             seed: Optional random seed.
         """
-        rng = random.Random(seed)
         dim = len(self.position)
+        if dim == 0:
+            return
 
-        for d in range(dim):
-            phi = rng.random()
-            # Local stochastic attractor
-            p_d = (phi * self.pbest_position[d]) + ((1.0 - phi) * gbest_position[d])
+        rng = np.random.default_rng(seed)
+        pbest_arr = np.array(self.pbest_position, dtype=np.float64)
+        gbest_arr = np.array(gbest_position, dtype=np.float64)
+        mbest_arr = np.array(mbest_position, dtype=np.float64)
+        pos_arr = np.array(self.position, dtype=np.float64)
 
-            u = max(1e-8, min(1.0 - 1e-8, rng.random()))
-            quantum_step = beta * abs(mbest_position[d] - self.position[d]) * math.log(1.0 / u)
+        # Vectorized stochastic attractor
+        phi = rng.random(size=dim)
+        p_d = (phi * pbest_arr) + ((1.0 - phi) * gbest_arr)
 
-            # Random sign +/-
-            sign = 1.0 if rng.random() < 0.5 else -1.0
-            new_pos = p_d + (sign * quantum_step)
+        u = np.clip(rng.random(size=dim), 1e-8, 1.0 - 1e-8)
+        quantum_step = beta * np.abs(mbest_arr - pos_arr) * np.log(1.0 / u)
 
-            self.position[d] = new_pos
+        # Vectorized random sign +/-
+        signs = np.where(rng.random(size=dim) < 0.5, 1.0, -1.0)
+        new_pos = p_d + (signs * quantum_step)
 
-        self.clamp_position()
+        min_bound, max_bound = self.bounds
+        np.clip(new_pos, min_bound, max_bound, out=new_pos)
+        self.position = new_pos.tolist()
 
 
 def compute_mbest(particles: list[QPSOParticle]) -> list[float]:
-    """Compute mean-best position vector across all particles in the swarm."""
+    """Compute mean-best position vector across all particles in the swarm using NumPy."""
     if not particles:
         return []
 
-    dim = len(particles[0].position)
-    mbest = [0.0] * dim
-
-    for d in range(dim):
-        mbest[d] = sum(p.pbest_position[d] for p in particles) / len(particles)
-
-    return mbest
+    pbests = np.array([p.pbest_position for p in particles], dtype=np.float64)
+    return np.mean(pbests, axis=0).tolist()

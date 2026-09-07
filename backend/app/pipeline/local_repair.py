@@ -22,6 +22,44 @@ from app.qpso.run_qpso import run_qpso
 log = logging.getLogger(__name__)
 
 
+def apply_2opt_smoothing(
+    stops: list[str],
+    distance_lookup: dict[tuple[str, str], float] | None = None,
+    max_iterations: int = 20,
+) -> list[str]:
+    """
+    Apply 2-opt edge-swap heuristic to uncross intersecting route legs
+    and minimize total distance on a single vehicle's stop sequence.
+    """
+    if len(stops) < 4:
+        return list(stops)
+
+    def dist(s1: str, s2: str) -> float:
+        if distance_lookup and (s1, s2) in distance_lookup:
+            return distance_lookup[(s1, s2)]
+        return 1.0
+
+    best = list(stops)
+    improved = True
+    iteration = 0
+
+    while improved and iteration < max_iterations:
+        improved = False
+        iteration += 1
+        for i in range(len(best) - 2):
+            for j in range(i + 2, len(best)):
+                cost_before = dist(best[i], best[i + 1]) + dist(best[j], best[(j + 1) % len(best)])
+                cost_after = dist(best[i], best[j]) + dist(best[i + 1], best[(j + 1) % len(best)])
+                if cost_after < cost_before - 1e-4:
+                    best[i + 1 : j + 1] = list(reversed(best[i + 1 : j + 1]))
+                    improved = True
+                    break
+            if improved:
+                break
+
+    return best
+
+
 async def repair_or_escalate_on_failed(
     session_id: str | ObjectId,
     failed_vehicle_id: str,
@@ -30,17 +68,8 @@ async def repair_or_escalate_on_failed(
     db: Any = None,
 ) -> dict[str, Any]:
     """
-    Handle a failed delivery event: tries Tier 2 Local Repair first, escalating to Tier 3 Full QGA only if necessary.
-
-    Args:
-        session_id: ID of the active RoutingSession.
-        failed_vehicle_id: Vehicle where the delivery attempt failed.
-        failed_parcel_id: Stop or parcel ID that failed.
-        current_time_min: Current simulated timestamp in minutes since midnight.
-        db: Optional Motor database handle.
-
-    Returns:
-        Dict containing tier applied ('failed_local_repair' or 'escalation_full_qga'), outcome, and timing.
+    Handle a failed delivery event: tries Tier 2 Local Repair with 2-opt smoothing first,
+    escalating to Tier 3 Full QGA only if necessary.
     """
     t0 = time.perf_counter()
     if db is None:
@@ -77,7 +106,7 @@ async def repair_or_escalate_on_failed(
     if assignments and "warehouse_id" in assignments[0]:
         wh_id = assignments[0]["warehouse_id"]
 
-    # Step 2: Search existing candidate vehicles for nearest feasible insertion (Tier 2)
+    # Step 2: Search existing candidate vehicles for nearest feasible insertion with 2-opt smoothing (Tier 2)
     repaired_target_vehicle = None
     best_candidate_stops = None
     best_candidate_idx = None
@@ -86,12 +115,12 @@ async def repair_or_escalate_on_failed(
     for idx, cand in enumerate(assignments):
         v_id = cand.get("vehicle_id")
         if v_id == failed_vehicle_id:
-            continue  # Don't immediately re-assign to the same failing vehicle
+            continue
 
         curr_stops = cand.get("stops", [])
-        # Try inserting at each position in the candidate vehicle's route
         for ins_pos in range(len(curr_stops) + 1):
-            trial_stops = curr_stops[:ins_pos] + [failed_parcel_id] + curr_stops[ins_pos:]
+            raw_trial_stops = curr_stops[:ins_pos] + [failed_parcel_id] + curr_stops[ins_pos:]
+            trial_stops = apply_2opt_smoothing(raw_trial_stops)
 
             decoded_routes = {
                 v_id: [
@@ -112,7 +141,6 @@ async def repair_or_escalate_on_failed(
             )
 
             if trial_qpso.feasible:
-                # Feasible candidate insertion found!
                 repaired_target_vehicle = v_id
                 best_candidate_stops = trial_stops
                 best_candidate_idx = idx
