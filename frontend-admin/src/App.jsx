@@ -3,9 +3,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Layout from './pages/Layout';
 import FleetOverview from './pages/FleetOverview';
-
 import RouteAssignment from './pages/RouteAssignment';
 import VehicleManagement from './pages/VehicleManagement';
+import Analytics from './pages/Analytics';
 import Diagnostics from './pages/Diagnostics';
 
 function MainApp() {
@@ -21,6 +21,7 @@ function MainApp() {
       {activeTab === 'overview' && <FleetOverview />}
       {activeTab === 'routing' && <RouteAssignment />}
       {activeTab === 'vehicles' && <VehicleManagement />}
+      {activeTab === 'analytics' && <Analytics />}
       {activeTab === 'diagnostics' && <Diagnostics />}
     </Layout>
   );

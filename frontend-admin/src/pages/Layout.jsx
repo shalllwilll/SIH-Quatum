@@ -5,6 +5,7 @@ import {
   Route,
   Truck,
   Activity,
+  BarChart3,
   LogOut,
   Radio,
 } from 'lucide-react';
@@ -16,6 +17,7 @@ export default function Layout({ activeTab, onTabChange, children }) {
     { id: 'overview', label: 'Fleet Overview', icon: MapPin },
     { id: 'routing', label: 'Route Assignment', icon: Route },
     { id: 'vehicles', label: 'Vehicles & Drivers', icon: Truck },
+    { id: 'analytics', label: 'Analytics & Trends', icon: BarChart3 },
     { id: 'diagnostics', label: 'Live Traffic & Engine', icon: Activity },
   ];
 

@@ -98,4 +98,13 @@ export const api = {
     if (sessionId) q += `&session_id=${sessionId}`;
     return apiRequest(q);
   },
+
+  // Analytics
+  getFuelEfficiencyTrend: () => apiRequest('/analytics/fuel-efficiency'),
+  getSlaCompliance: (groupBy = null) => {
+    const q = groupBy ? `/analytics/sla-compliance?groupBy=${groupBy}` : '/analytics/sla-compliance';
+    return apiRequest(q);
+  },
+  getViolations: () => apiRequest('/analytics/violations'),
+  getVehiclePerformance: () => apiRequest('/analytics/vehicle-performance'),
 };
