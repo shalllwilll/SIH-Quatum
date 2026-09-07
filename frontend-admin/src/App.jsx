@@ -5,6 +5,8 @@ import Layout from './pages/Layout';
 import FleetOverview from './pages/FleetOverview';
 
 import RouteAssignment from './pages/RouteAssignment';
+import VehicleManagement from './pages/VehicleManagement';
+import Diagnostics from './pages/Diagnostics';
 
 function MainApp() {
   const { isAuthenticated } = useAuth();
@@ -18,18 +20,8 @@ function MainApp() {
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
       {activeTab === 'overview' && <FleetOverview />}
       {activeTab === 'routing' && <RouteAssignment />}
-      {activeTab === 'vehicles' && (
-        <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Vehicles & Drivers</h2>
-          <p style={{ color: 'var(--text-muted)' }}>Vehicle and Driver management loading...</p>
-        </div>
-      )}
-      {activeTab === 'diagnostics' && (
-        <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Live Traffic & Engine Diagnostics</h2>
-          <p style={{ color: 'var(--text-muted)' }}>Real-time TomTom live traffic & QGA/QPSO engine telemetry.</p>
-        </div>
-      )}
+      {activeTab === 'vehicles' && <VehicleManagement />}
+      {activeTab === 'diagnostics' && <Diagnostics />}
     </Layout>
   );
 }
