@@ -41,10 +41,19 @@ export default function LiveMap() {
       preferCanvas: true, // Hardware-accelerated Canvas rendering
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; CARTO &copy; OpenStreetMap',
-      subdomains: 'abcd',
-      maxZoom: 19,
+    // Dark-mode basemap: use CARTO if key is configured, otherwise high-contrast ESRI Dark Canvas (no watermark / no key needed)
+    const cartoKey = import.meta.env.VITE_CARTO_API_KEY;
+    const tileUrl = cartoKey
+      ? `https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?api_key=${cartoKey}`
+      : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
+    const attribution = cartoKey
+      ? '&copy; <a href="https://carto.com/">CARTO</a> | &copy; OpenStreetMap'
+      : '&copy; Esri &mdash; Esri, DeLorme, NAVTEQ';
+
+    L.tileLayer(tileUrl, {
+      attribution,
+      subdomains: cartoKey ? 'abcd' : '',
+      maxZoom: 18,
     }).addTo(map);
 
     mapInstanceRef.current = map;
