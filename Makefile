@@ -2,7 +2,7 @@
 # Usage: make <target>
 # Paths are relative to repo root; cd backend is used where needed.
 
-.PHONY: run-backend run-frontend-admin run-frontend-driver test-backend lint-backend lint-frontend-admin lint-frontend-driver lint install help
+.PHONY: run-backend run-frontend-admin run-frontend-driver test-backend lint-backend lint-frontend-admin lint-frontend-driver lint install build-graph help
 
 PYTHON_VENV = backend/.venv/bin
 
@@ -17,6 +17,11 @@ help:
 	@echo "  lint-frontend-driver   Run eslint on frontend-driver"
 	@echo "  lint                   Run all lint checks (backend + both frontends)"
 	@echo "  install                Install backend Python deps into backend/.venv"
+	@echo "  build-graph            Fetch Pune OSM road network and save to backend/data/pune_graph.graphml"
+
+build-graph:
+	$(PYTHON_VENV)/python -m backend.scripts.build_graph
+
 
 run-backend:
 	$(PYTHON_VENV)/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir backend
