@@ -1,126 +1,121 @@
-# Last-Mile Delivery Routing Platform
+# Abraxas: Hybrid QGA + QPSO Last-Mile Logistics Platform
 
-Hybrid optimization engine (QGA + QPSO) with Leiden pre-clustering, FastAPI backend, and React frontends (Admin and Driver) for dynamic last-mile logistics in Pune.
+Production-ready last-mile delivery routing and dynamic fleet dispatch platform for Pune, India. Powered by a hybrid Quantum-Inspired Genetic Algorithm (QGA) for combinatorial clustering & stop sequencing, Quantum-Behaved Particle Swarm Optimization (QPSO) for continuous departure scheduling & SLA timing, FastAPI REST API, and dedicated React 19 Admin & Driver web portals.
 
 ---
 
-## Repository Structure
+## 🚀 Key Platform Features
+
+- **Hybrid Quantum Optimization Engine:**
+  - **Leiden Graph Modularity Pre-Clustering:** Partitions delivery stops into contiguous delivery zones, reducing combinatorial search space by over $10^{165}\times$.
+  - **Discrete QGA (Quantum-Inspired Genetic Algorithm):** Q-bit rotation gates ($\theta$), H-gate probabilistic mutation, and elite chromosome retention optimize stop ordering across multiple vehicle capacities.
+  - **Continuous QPSO (Quantum-Behaved Particle Swarm Optimization):** Simulates wave-function $\delta$-potential well dynamics to optimize departure times and satisfy hard customer SLA delivery windows.
+  - **Dynamic Bounce-Back Loop:** Automatically repairs infeasible chromosomes via QGA chromosome mutation and best-effort fallback tagging.
+- **Three-Tiered Live Re-Optimization:**
+  - *Tier 1 (Delivered):* Continuous QPSO re-tune on remaining stops (~18 ms).
+  - *Tier 2 (Failed):* Greedy nearest-neighbor insertion into alternate vehicles with QPSO feasibility check (~58 ms).
+  - *Tier 3 (Escalation):* Structural QGA+QPSO re-partitioning when no vehicle can absorb unserved stops (~330 ms).
+- **TomTom Live Traffic Integration:** Representative arterial segment sampling with spatial decay propagation, 120-second staggered caching, and simulated rush-hour fallback curve.
+- **Admin Fleet Management Portal (Port 5173):** Live Leaflet fleet maps, 4 business-priority preset selector cards (`balanced`, `minimize_distance`, `minimize_cost_fuel`, `prioritize_sla`), one-click dispatch, and pure SVG analytics dashboard (fuel trends, SLA gauges, violation audit log).
+- **Driver Mobile Portal (Port 5174):** Role-isolated route manifests, live vehicle telemetry interpolation along real OSM road geometry, and delivery action logging (`Mark Delivered` / `Mark Failed`).
+
+---
+
+## 📁 Repository Structure
 
 ```
-├── backend/                  # FastAPI backend service
+├── backend/                  # FastAPI backend service (Python 3.11+)
 │   ├── app/
-│   │   ├── __init__.py
-│   │   └── main.py          # FastAPI application entrypoint & health routes
-│   ├── .env.example         # Environment variables template
-│   └── requirements.txt     # Python dependencies
-├── frontend-admin/           # React + Vite admin dashboard (Port 5173)
-│   ├── src/
-│   │   ├── App.jsx          # Admin portal root component
-│   │   └── ...
-│   └── package.json
-├── frontend-driver/          # React + Vite driver mobile-view app (Port 5174)
-│   ├── src/
-│   │   ├── App.jsx          # Driver portal root component
-│   │   └── ...
-│   └── package.json
-├── docs/                     # Design documents, benchmarks, and API contracts
-├── Development_Playbook.md   # Step-by-step phased development plan
-└── README.md                 # Project setup and execution guide
+│   │   ├── auth/             # JWT authentication & role-based access control
+│   │   ├── clustering/       # Leiden graph community pre-clustering
+│   │   ├── costing/          # 4 business priority presets & cost functions
+│   │   ├── graph/            # Pune OSM road network loader & spatial indexing
+│   │   ├── pipeline/         # QGA+QPSO orchestrator, retune & local repair
+│   │   ├── qga/              # Quantum-Inspired Genetic Algorithm engine
+│   │   ├── qpso/             # Quantum-Behaved Particle Swarm Optimization engine
+│   │   ├── routers/          # REST endpoints (CRUD, routing, driver, analytics)
+│   │   ├── simulation/       # Accelerated-clock movement & lat/lon interpolator
+│   │   └── traffic/          # TomTom traffic client, propagation & fallback curve
+│   ├── scripts/              # Benchmark, seed, and pre-flight healthcheck utilities
+│   └── tests/                # 112 pytest unit and integration test suite
+├── frontend-admin/           # React 19 + Vite Admin Portal (Port 5173)
+├── frontend-driver/          # React 19 + Vite Driver Portal (Port 5174)
+├── docs/                     # Architectural design docs, benchmarks, and API specs
+├── docker-compose.yml        # Multi-container deployment configuration
+├── Development_Playbook.md   # Complete phase-wise development record
+├── Makefile                  # Developer CLI shortcuts
+└── README.md                 # System overview and quickstart guide
 ```
 
 ---
 
-## Prerequisites
+## 📚 Technical Documentation Directory
 
+- 📐 **[API Contract](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/api_contract.md):** Complete REST endpoint specification and request/response payloads.
+- ⚡ **[Scalability & Benchmark Evidence](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/scalability_evidence.md):** Empirical timing results across 30 to 120 delivery stops and re-optimization cost tiers.
+- 🧪 **[End-to-End Regression Report](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/regression_report.md):** 112-test QA suite summary and lifecycle validation.
+- 🚀 **[Deployment Guide](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/deployment.md):** Step-by-step local and containerized deployment instructions.
+- 🔑 **[Demo Account Credentials](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/demo_accounts.md):** Pre-configured Admin and Driver login accounts.
+- 📈 **[Historical Seed Data Story](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/historical_seed_story.md):** 5-session improvement trajectory for the analytics dashboard.
+- 🗺️ **[Warehouse Locations](file:///Users/sharwilhodgar/Desktop/Abraxas%20P2/docs/warehouse_locations.md):** Pune distribution hub coordinates and catchment areas.
+
+---
+
+## ⚡ Quickstart Guide
+
+### 1. Prerequisites
 - **Python 3.11+**
-- **Node.js 18+** and **npm**
-- **Git**
+- **Node.js 18+** / npm
+- **MongoDB 7.0+** (running on `mongodb://localhost:27017`)
 
----
-
-## Quickstart Guide
-
-### 1. Backend Setup
-
+### 2. Setup & Seed Data
 ```bash
-# Navigate to backend directory
+# Clone repository and navigate to root
+cd "Abraxas P2"
+
+# Setup Python environment & install backend dependencies
 cd backend
-
-# Create and activate virtual environment
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
+pip install -e .
+cd ..
 
-# Install dependencies
-pip install -r requirements.txt
+# Seed delivery parcels, distribution hubs, and historical analytics sessions
+make seed-data
 
-# Configure environment variables
-cp .env.example .env
-
-# Run FastAPI development server (runs on http://localhost:8000)
-uvicorn app.main:app --reload --port 8000
+# Run pre-flight health check
+make healthcheck
 ```
 
-Verify backend health:
+### 3. Launch Platform Services
+In three separate terminal tabs:
+
 ```bash
-curl http://localhost:8000/health
-# Expected response: {"status":"ok"}
+# Terminal 1: Backend API (http://localhost:8000)
+make run-backend
+
+# Terminal 2: Admin Web Portal (http://localhost:5173)
+make run-frontend-admin
+
+# Terminal 3: Driver Web Portal (http://localhost:5174)
+make run-frontend-driver
 ```
 
 ---
 
-### 2. Admin Frontend Setup
-
-```bash
-# Navigate to frontend-admin directory
-cd frontend-admin
-
-# Install dependencies
-npm install
-
-# Start Vite dev server (runs on http://localhost:5173)
-npm run dev
-```
-
----
-
-### 3. Driver Frontend Setup
-
-```bash
-# Navigate to frontend-driver directory
-cd frontend-driver
-
-# Install dependencies
-npm install
-
-# Start Vite dev server (runs on http://localhost:5174)
-npm run dev
-```
-
----
-
-## Makefile Shortcuts
-
-Run from the repository root:
+## 🛠️ Developer CLI Commands
 
 | Command | Description |
 |---|---|
-| `make run-backend` | Start FastAPI backend on port 8000 |
-| `make run-frontend-admin` | Start admin Vite dev server on port 5173 |
-| `make run-frontend-driver` | Start driver Vite dev server on port 5174 |
-| `make test-backend` | Run the backend pytest suite |
-| `make lint-backend` | Run ruff lint on backend Python code |
-| `make lint-frontend-admin` | Run oxlint on frontend-admin |
-| `make lint-frontend-driver` | Run oxlint on frontend-driver |
-| `make lint` | Run all lint checks (backend + both frontends) |
-| `make install` | Install backend Python dependencies |
+| `make test-backend` | Execute full automated test suite (112 tests) |
+| `make lint` | Run ruff and frontend linters |
+| `make scale-benchmark` | Run 120-stop load test and performance sweep |
+| `make healthcheck` | Verify MongoDB, graph cache, and TomTom connectivity |
+| `make seed-data` | Idempotently seed parcels, hubs, vehicles, and sessions |
 
 ---
 
-## Pre-Push Checklist
+## 🔒 Demo Logins
 
-Before every `git push`, run:
-
-```bash
-make test-backend    # must be 0 failures
-make lint            # must be 0 errors
-```
+- **Admin Portal (`http://localhost:5173`):** Username `admin` | Password `admin123`
+- **Driver Portal (`http://localhost:5174`):** Username `driver1` | Password `driver123`
