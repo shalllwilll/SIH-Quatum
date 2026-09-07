@@ -75,8 +75,17 @@ async def repair_or_escalate_on_failed(
     if db is None:
         db = get_db()
 
-    obj_id = ObjectId(session_id) if isinstance(session_id, str) else session_id
-    session = await db["routing_sessions"].find_one({"_id": obj_id})
+    session = None
+    if isinstance(session_id, str) and ObjectId.is_valid(session_id):
+        session = await db["routing_sessions"].find_one({"_id": ObjectId(session_id)})
+    elif isinstance(session_id, ObjectId):
+        session = await db["routing_sessions"].find_one({"_id": session_id})
+
+    if not session:
+        session = await db["routing_sessions"].find_one(
+            {"status": {"$in": ["assigned", "completed"]}},
+            sort=[("created_at", -1), ("_id", -1)],
+        )
 
     if not session:
         log.warning("Session %s not found for local repair.", session_id)
@@ -170,7 +179,7 @@ async def repair_or_escalate_on_failed(
 
         assignments[best_candidate_idx] = target_a
         await db["routing_sessions"].update_one(
-            {"_id": obj_id},
+            {"_id": session["_id"]},
             {"$set": {"vehicle_assignments": assignments}},
         )
 
@@ -222,7 +231,7 @@ async def repair_or_escalate_on_failed(
     )
 
     await db["routing_sessions"].update_one(
-        {"_id": obj_id},
+        {"_id": session["_id"]},
         {
             "$set": {
                 "vehicle_assignments": pipeline_res.vehicle_assignments,

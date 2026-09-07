@@ -196,3 +196,53 @@ async def test_tc_6_3_07_driver_manifest_data_isolation(client: AsyncClient):
 
     # Driver 1 cannot see Driver 2's vehicle assignment
     assert data1["vehicle_label"] != data2["vehicle_label"]
+
+
+@pytest.mark.asyncio
+async def test_tc_6_3_08_driver_delivery_actions_e2e(client: AsyncClient):
+    """TC-6.3-08: Test complete driver workflow with frontend action button payloads."""
+    # Login Driver 1
+    d1_res = await client.post("/auth/login", json={"username": "driver1", "password": "driver123"})
+    assert d1_res.status_code == 200
+    token_d1 = d1_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token_d1}"}
+
+    # Fetch manifest
+    manifest_res = await client.get("/driver/manifest", headers=headers)
+    assert manifest_res.status_code == 200
+    manifest = manifest_res.json()
+    assert len(manifest["itinerary"]) >= 1
+
+    first_stop = manifest["itinerary"][0]
+    stop_id = first_stop["parcel_id"]
+
+    # Mark delivered using frontend payload format (event_type, session_id)
+    deliver_payload = {
+        "event_type": "DELIVERED",
+        "parcel_id": stop_id,
+        "vehicle_id": manifest["vehicle_label"],
+        "session_id": manifest["session_id"],
+        "failure_reason": None,
+    }
+    event_res = await client.post("/delivery-events", json=deliver_payload)
+    assert event_res.status_code == 201, event_res.text
+    event_data = event_res.json()
+    assert event_data["status"] == "delivered"
+    assert event_data["parcel_id"] == stop_id
+
+    # Refresh manifest and ensure status is updated
+    manifest_res2 = await client.get("/driver/manifest", headers=headers)
+    assert manifest_res2.status_code == 200
+    manifest2 = manifest_res2.json()
+    matching = [s for s in manifest2["itinerary"] if s["parcel_id"] == stop_id]
+    assert len(matching) == 1
+    assert matching[0]["status"] == "delivered"
+
+    # Fetch driver position
+    pos_res = await client.get("/driver/position", headers=headers)
+    assert pos_res.status_code == 200
+    pos_data = pos_res.json()
+    assert "lat" in pos_data
+    assert "lon" in pos_data
+    assert pos_data["vehicle_id"] is not None
+

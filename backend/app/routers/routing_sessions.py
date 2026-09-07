@@ -10,6 +10,7 @@ Routing optimization endpoints:
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from bson import ObjectId
@@ -180,7 +181,7 @@ async def run_routing_session(req: RoutingRunRequest, background_tasks: Backgrou
     session_doc = {
         "preset": normalized_preset,
         "status": "running",
-        "created_at": 1788780000.0,
+        "created_at": time.time(),
         "cluster_count": None,
         "vehicle_assignments": [],
         "fitness_history": [],
@@ -332,6 +333,17 @@ async def assign_session_routes(session_id: str):
         {"_id": obj_id},
         {"$set": {"assigned": True, "status": "completed"}},
     )
+
+    # Broadcast routes assigned event
+    try:
+        from app.routers.websocket import manager
+        await manager.broadcast_fleet({
+            "type": "routes_assigned",
+            "session_id": str(doc["_id"]),
+            "assigned_vehicles": list(assigned_vehicles),
+        })
+    except Exception:
+        pass
 
     return AssignRoutesResponse(
         session_id=str(doc["_id"]),

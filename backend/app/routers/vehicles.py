@@ -51,13 +51,16 @@ async def _get_stops_and_warehouse_lookups(db: Any) -> tuple[dict[str, tuple[flo
 
     # Parcels
     parcels_cursor = db["parcels"].find()
-    parcels_docs = await parcels_cursor.to_list(length=300)
+    parcels_docs = await parcels_cursor.to_list(length=500)
     stops_coords: dict[str, tuple[float, float]] = {}
     for p in parcels_docs:
-        key = str(p.get("_id", p.get("parcel_id", "P-UNKNOWN")))
-        stops_coords[key] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
-        if "parcel_id" in p:
-            stops_coords[str(p["parcel_id"])] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+        lat_val = float(p.get("lat", 18.5204))
+        lon_val = float(p.get("lon", 73.8567))
+        stops_coords[str(p.get("_id"))] = (lat_val, lon_val)
+        if p.get("parcel_id"):
+            stops_coords[str(p["parcel_id"])] = (lat_val, lon_val)
+        if p.get("tracking_number"):
+            stops_coords[str(p["tracking_number"])] = (lat_val, lon_val)
 
     return stops_coords, wh_coords
 
@@ -83,16 +86,18 @@ async def get_all_vehicle_positions():
 
     # Fetch latest session with vehicle assignments
     session = await db["routing_sessions"].find_one(
-        {"status": "completed"},
-        sort=[("created_at", -1)],
+        {"status": {"$in": ["assigned", "completed"]}},
+        sort=[("created_at", -1), ("_id", -1)],
     )
 
     assignment_map: dict[str, dict[str, Any]] = {}
+    assignment_map_lower: dict[str, dict[str, Any]] = {}
     if session:
         for a in session.get("vehicle_assignments", []):
             v_key = a.get("vehicle_id")
             if v_key:
                 assignment_map[v_key] = a
+                assignment_map_lower[v_key.lower()] = a
 
     stops_coords, wh_coords = await _get_stops_and_warehouse_lookups(db)
     current_sim_time = sim_clock.get_current_time_min()
@@ -104,7 +109,11 @@ async def get_all_vehicle_positions():
         driver_id = doc.get("driver_id")
         db_status = doc.get("status", "idle")
 
-        assignment = assignment_map.get(label) or assignment_map.get(v_id)
+        assignment = (
+            assignment_map.get(label)
+            or assignment_map.get(v_id)
+            or assignment_map_lower.get(label.lower())
+        )
 
         if assignment:
             # Interpolate position along real assigned route legs
@@ -183,14 +192,16 @@ async def get_single_vehicle_position(vehicle_id: str):
 
     # Fetch assignment
     session = await db["routing_sessions"].find_one(
-        {"status": "completed"},
-        sort=[("created_at", -1)],
+        {"status": {"$in": ["assigned", "completed"]}},
+        sort=[("created_at", -1), ("_id", -1)],
     )
 
     assignment = None
     if session:
+        v_target = label.strip().lower()
         for a in session.get("vehicle_assignments", []):
-            if a.get("vehicle_id") in (label, v_id):
+            v_cand = str(a.get("vehicle_id", "")).strip().lower()
+            if v_cand in (v_target, str(v_id).lower()) or v_cand.replace("-", "") == v_target.replace("-", ""):
                 assignment = a
                 break
 

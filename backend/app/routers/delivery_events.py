@@ -14,7 +14,7 @@ from typing import Annotated, Any
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.db import get_db
 from app.models.delivery_event import DeliveryEvent, DeliveryStatus
@@ -34,6 +34,26 @@ class DeliveryEventCreateRequest(BaseModel):
     recorded_at_min: int | None = Field(None, ge=0, le=1439, description="Simulated minutes since midnight")
     note: str | None = Field(None, description="Optional driver note or failure reason")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Accept event_type as alias for status
+            if "status" not in data and "event_type" in data:
+                raw = str(data["event_type"]).lower()
+                data["status"] = raw
+            elif "status" in data and isinstance(data["status"], str):
+                data["status"] = data["status"].lower()
+
+            # Accept session_id as alias for routing_session_id
+            if not data.get("routing_session_id") and data.get("session_id"):
+                data["routing_session_id"] = data["session_id"]
+
+            # Accept failure_reason as alias for note
+            if not data.get("note") and data.get("failure_reason"):
+                data["note"] = data["failure_reason"]
+        return data
+
 
 def _doc_to_event(doc: dict[str, Any]) -> DeliveryEvent:
     """Convert MongoDB document to Pydantic DeliveryEvent model."""
@@ -51,32 +71,49 @@ async def create_delivery_event(event_in: DeliveryEventCreateRequest):
     """
     db = get_db()
 
-    # Validate parcel exists in database (or create dummy doc for testing)
+    # Validate parcel exists in database
     parcel_doc = None
-    try:
+    if ObjectId.is_valid(event_in.parcel_id):
         parcel_doc = await db["parcels"].find_one({"_id": ObjectId(event_in.parcel_id)})
-    except (InvalidId, Exception):
-        parcel_doc = await db["parcels"].find_one({"parcel_id": event_in.parcel_id})
-
     if not parcel_doc:
-        # Check by tracking number
+        parcel_doc = await db["parcels"].find_one({"parcel_id": event_in.parcel_id})
+    if not parcel_doc:
         parcel_doc = await db["parcels"].find_one({"tracking_number": event_in.parcel_id})
 
-    if not parcel_doc and not event_in.parcel_id.startswith("P-"):
+    # Find active session if not provided
+    session_id = event_in.routing_session_id
+    active_session = None
+    if session_id and ObjectId.is_valid(session_id):
+        active_session = await db["routing_sessions"].find_one({"_id": ObjectId(session_id)})
+    if not active_session:
+        active_session = await db["routing_sessions"].find_one(
+            {"status": {"$in": ["assigned", "completed"]}},
+            sort=[("created_at", -1), ("_id", -1)],
+        )
+    if active_session and not session_id:
+        session_id = str(active_session["_id"])
+
+    # Check if this parcel_id exists in active session route assignments
+    in_active_session = False
+    if active_session:
+        for a in active_session.get("vehicle_assignments", []):
+            stops = [str(s) for s in a.get("stops", [])]
+            stop_arrs = [str(s.get("stop_id")) for s in a.get("stop_arrivals", [])]
+            if str(event_in.parcel_id) in stops or str(event_in.parcel_id) in stop_arrs:
+                in_active_session = True
+                break
+
+    is_demo_or_hist = (
+        event_in.parcel_id.startswith("P-")
+        or event_in.parcel_id.startswith("HIST-")
+        or event_in.parcel_id.startswith("DEMO-")
+        or event_in.parcel_id.startswith("TEST-")
+    )
+    if not parcel_doc and not in_active_session and not is_demo_or_hist:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Parcel with ID '{event_in.parcel_id}' not found.",
         )
-
-    # Find active session if not provided
-    session_id = event_in.routing_session_id
-    if not session_id:
-        active_session = await db["routing_sessions"].find_one(
-            {"status": "completed"},
-            sort=[("created_at", -1)],
-        )
-        if active_session:
-            session_id = str(active_session["_id"])
 
     rec_min = event_in.recorded_at_min if event_in.recorded_at_min is not None else 600
 
@@ -122,6 +159,20 @@ async def create_delivery_event(event_in: DeliveryEventCreateRequest):
             {"_id": parcel_doc["_id"]},
             {"$set": {"status": target_status}},
         )
+
+    # Broadcast live delivery event over WebSocket to fleet dispatchers
+    try:
+        from app.routers.websocket import manager
+        await manager.broadcast_fleet({
+            "type": "delivery_event",
+            "parcel_id": event_in.parcel_id,
+            "vehicle_id": event_in.vehicle_id,
+            "status": event_in.status.value,
+            "recorded_at_min": rec_min,
+            "reoptimization": reopt_result,
+        })
+    except Exception:
+        pass
 
     created_event = await db["delivery_events"].find_one({"_id": insert_res.inserted_id})
     return _doc_to_event(created_event)

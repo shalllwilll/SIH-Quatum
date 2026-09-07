@@ -44,8 +44,17 @@ async def retune_on_delivered(
     if db is None:
         db = get_db()
 
-    obj_id = ObjectId(session_id) if isinstance(session_id, str) else session_id
-    session = await db["routing_sessions"].find_one({"_id": obj_id})
+    session = None
+    if isinstance(session_id, str) and ObjectId.is_valid(session_id):
+        session = await db["routing_sessions"].find_one({"_id": ObjectId(session_id)})
+    elif isinstance(session_id, ObjectId):
+        session = await db["routing_sessions"].find_one({"_id": session_id})
+
+    if not session:
+        session = await db["routing_sessions"].find_one(
+            {"status": {"$in": ["assigned", "completed"]}},
+            sort=[("created_at", -1), ("_id", -1)],
+        )
 
     if not session:
         log.warning("Session %s not found for retune.", session_id)
@@ -127,7 +136,7 @@ async def retune_on_delivered(
     # Update database
     assignments[target_idx] = target_assignment
     await db["routing_sessions"].update_one(
-        {"_id": obj_id},
+        {"_id": session["_id"]},
         {"$set": {"vehicle_assignments": assignments}},
     )
 

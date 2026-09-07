@@ -82,7 +82,7 @@ async def get_fuel_efficiency_trend():
     """
     db = get_db()
     pipeline = [
-        {"$match": {"status": "completed"}},
+        {"$match": {"status": {"$in": ["completed", "assigned"]}}},
         {"$sort": {"created_at": 1}},
         {
             "$project": {
@@ -214,7 +214,7 @@ async def get_constraint_violations():
     Historical constraint-violation history (capacity overruns and SLA misses).
     """
     db = get_db()
-    cursor = db["routing_sessions"].find({"status": "completed"}).sort("created_at", 1)
+    cursor = db["routing_sessions"].find({"status": {"$in": ["completed", "assigned"]}}).sort("created_at", 1)
     docs = await cursor.to_list(length=100)
 
     violations: list[ViolationRecord] = []
@@ -243,7 +243,7 @@ async def get_vehicle_performance():
     Historical performance metrics aggregated per fleet vehicle.
     """
     db = get_db()
-    cursor = db["routing_sessions"].find({"status": "completed"})
+    cursor = db["routing_sessions"].find({"status": {"$in": ["completed", "assigned"]}})
     sessions = await cursor.to_list(length=100)
 
     veh_stats: dict[str, dict[str, Any]] = {}

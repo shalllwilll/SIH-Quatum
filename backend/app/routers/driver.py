@@ -55,36 +55,106 @@ async def get_driver_manifest(driver_user: Annotated[dict[str, Any], Depends(req
 
     # Find active routing session with vehicle assignments
     session = await db["routing_sessions"].find_one(
-        {"status": "completed"},
-        sort=[("created_at", -1)],
+        {"status": {"$in": ["assigned", "completed"]}},
+        sort=[("created_at", -1), ("_id", -1)],
     )
 
     itinerary: list[ItineraryStop] = []
     session_id: str | None = None
 
+    # Load parcels lookup for rich address and coordinate display
+    parcels_cursor = db["parcels"].find()
+    parcels_docs = await parcels_cursor.to_list(length=500)
+    parcels_by_id: dict[str, dict[str, Any]] = {}
+    for p in parcels_docs:
+        parcels_by_id[str(p["_id"])] = p
+        if p.get("tracking_number"):
+            parcels_by_id[str(p["tracking_number"])] = p
+        if p.get("parcel_id"):
+            parcels_by_id[str(p["parcel_id"])] = p
+
+    events = []
+    delivered_stop_ids = set()
     if session:
         session_id = str(session["_id"])
+        # Load logged delivery events for this vehicle in the current active session
+        events_cursor = db["delivery_events"].find({
+            "routing_session_id": {"$in": [session_id, "SESSION-ACTIVE"]},
+            "vehicle_id": vehicle_label,
+        }).sort("recorded_at_wall", 1)
+        events = await events_cursor.to_list(length=200)
+
         assignments = session.get("vehicle_assignments", [])
+        v_target = vehicle_label.strip().lower()
+        matched_assignment = None
         for a in assignments:
-            if a.get("vehicle_id") == vehicle_label:
-                # Build stops
-                for idx, arr in enumerate(a.get("stop_arrivals", [])):
-                    pid = arr.get("stop_id", f"P-{idx+1}")
-                    arr_min = float(arr.get("arrival_time_min", 600.0))
-                    itinerary.append(
-                        ItineraryStop(
-                            stop_index=idx + 1,
-                            parcel_id=pid,
-                            address=f"Delivery Stop #{idx+1}, Pune",
-                            lat=18.5204 + (idx * 0.005),
-                            lon=73.8567 + (idx * 0.004),
-                            weight_kg=5.0,
-                            sla_start_min=540,
-                            sla_deadline_min=900,
-                            scheduled_arrival_min=round(arr_min, 1),
-                            status="pending",
-                        )
+            v_cand = str(a.get("vehicle_id", "")).strip().lower()
+            if v_cand == v_target or v_cand.replace("-", "") == v_target.replace("-", ""):
+                matched_assignment = a
+                break
+
+        # 1. First include completed/failed stops from logged events for this session/vehicle
+        latest_event_by_parcel: dict[str, dict[str, Any]] = {}
+        for ev in events:
+            pid_key = str(ev.get("parcel_id"))
+            latest_event_by_parcel[pid_key] = ev
+
+        for pid, ev in latest_event_by_parcel.items():
+            delivered_stop_ids.add(pid)
+            p_doc = parcels_by_id.get(pid)
+
+            addr = (p_doc.get("address") if p_doc else None) or f"Delivery Stop #{len(itinerary)+1}, Pune"
+            lat = float(p_doc.get("lat")) if p_doc and "lat" in p_doc else (18.5204 + (len(itinerary) * 0.005))
+            lon = float(p_doc.get("lon")) if p_doc and "lon" in p_doc else (73.8567 + (len(itinerary) * 0.004))
+            weight = float(p_doc.get("weight_kg", 5.0)) if p_doc else 5.0
+            sla_start = int(p_doc.get("sla_start_min", 540)) if p_doc else 540
+            sla_end = int(p_doc.get("sla_deadline_min", 900)) if p_doc else 900
+
+            itinerary.append(
+                ItineraryStop(
+                    stop_index=len(itinerary) + 1,
+                    parcel_id=pid,
+                    address=addr,
+                    lat=round(lat, 6),
+                    lon=round(lon, 6),
+                    weight_kg=round(weight, 1),
+                    sla_start_min=sla_start,
+                    sla_deadline_min=sla_end,
+                    scheduled_arrival_min=float(ev.get("recorded_at_min", 600.0)),
+                    status=ev.get("status", "delivered"),
+                )
+            )
+
+        # 2. Append remaining active stops from the latest assignment
+        if matched_assignment:
+            for arr in matched_assignment.get("stop_arrivals", []):
+                pid = str(arr.get("stop_id", f"P-{len(itinerary)+1}"))
+                if pid in delivered_stop_ids:
+                    continue
+                arr_min = float(arr.get("arrival_time_min", 600.0))
+                p_doc = parcels_by_id.get(pid)
+
+                addr = (p_doc.get("address") if p_doc else None) or f"Delivery Stop #{len(itinerary)+1}, Pune"
+                lat = float(p_doc.get("lat")) if p_doc and "lat" in p_doc else (18.5204 + (len(itinerary) * 0.005))
+                lon = float(p_doc.get("lon")) if p_doc and "lon" in p_doc else (73.8567 + (len(itinerary) * 0.004))
+                weight = float(p_doc.get("weight_kg", 5.0)) if p_doc else 5.0
+                sla_start = int(p_doc.get("sla_start_min", 540)) if p_doc else 540
+                sla_end = int(p_doc.get("sla_deadline_min", 900)) if p_doc else 900
+
+                itinerary.append(
+                    ItineraryStop(
+                        stop_index=len(itinerary) + 1,
+                        parcel_id=pid,
+                        address=addr,
+                        lat=round(lat, 6),
+                        lon=round(lon, 6),
+                        weight_kg=round(weight, 1),
+                        sla_start_min=sla_start,
+                        sla_deadline_min=sla_end,
+                        scheduled_arrival_min=round(arr_min, 1),
+                        status="pending",
                     )
+                )
 
     # Fallback default stops if no session active yet
     if not itinerary:
@@ -119,23 +189,24 @@ async def get_driver_position(driver_user: Annotated[dict[str, Any], Depends(req
 
     db = get_db()
     veh_doc = await db["vehicles"].find_one({"label": vehicle_label})
+    if not veh_doc:
+        veh_doc = await db["vehicles"].find_one({"label": {"$regex": f"^{vehicle_label}$", "$options": "i"}})
 
     if not veh_doc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No vehicle found for driver '{driver_id}' ({vehicle_label}).",
-        )
+        veh_doc = {"_id": "simulated_veh", "label": vehicle_label, "driver_id": driver_id}
 
     # Fetch active assignment
     session = await db["routing_sessions"].find_one(
-        {"status": "completed"},
-        sort=[("created_at", -1)],
+        {"status": {"$in": ["assigned", "completed"]}},
+        sort=[("created_at", -1), ("_id", -1)],
     )
 
     assignment = None
     if session:
+        v_target = vehicle_label.strip().lower()
         for a in session.get("vehicle_assignments", []):
-            if a.get("vehicle_id") == vehicle_label:
+            v_cand = str(a.get("vehicle_id", "")).strip().lower()
+            if v_cand == v_target or v_cand.replace("-", "") == v_target.replace("-", ""):
                 assignment = a
                 break
 
@@ -144,13 +215,16 @@ async def get_driver_position(driver_user: Annotated[dict[str, Any], Depends(req
     wh_coords = (wh_doc.get("lat", 18.5204), wh_doc.get("lon", 73.8567)) if wh_doc else (18.5204, 73.8567)
 
     parcels_cursor = db["parcels"].find()
-    parcels_docs = await parcels_cursor.to_list(length=300)
+    parcels_docs = await parcels_cursor.to_list(length=500)
     stops_coords: dict[str, tuple[float, float]] = {}
     for p in parcels_docs:
-        key = str(p.get("_id", p.get("parcel_id", "P-UNKNOWN")))
-        stops_coords[key] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
-        if "parcel_id" in p:
-            stops_coords[str(p["parcel_id"])] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+        lat_val = float(p.get("lat", 18.5204))
+        lon_val = float(p.get("lon", 73.8567))
+        stops_coords[str(p.get("_id"))] = (lat_val, lon_val)
+        if p.get("parcel_id"):
+            stops_coords[str(p["parcel_id"])] = (lat_val, lon_val)
+        if p.get("tracking_number"):
+            stops_coords[str(p["tracking_number"])] = (lat_val, lon_val)
 
     current_sim_time = sim_clock.get_current_time_min()
 

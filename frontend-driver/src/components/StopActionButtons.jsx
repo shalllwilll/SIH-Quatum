@@ -38,10 +38,13 @@ export default function StopActionButtons({
 
     try {
       await driverApi.logDeliveryEvent({
+        status: 'delivered',
         event_type: 'DELIVERED',
         parcel_id: stopId,
         vehicle_id: vehicleId,
+        routing_session_id: sessionId || null,
         session_id: sessionId || null,
+        note: 'Delivered successfully by driver',
         failure_reason: null,
       });
 
@@ -62,11 +65,14 @@ export default function StopActionButtons({
 
     try {
       await driverApi.logDeliveryEvent({
+        status: 'failed',
         event_type: 'FAILED',
         parcel_id: stopId,
         vehicle_id: vehicleId,
+        routing_session_id: sessionId || null,
         session_id: sessionId || null,
-        failure_reason: failureReason,
+        note: failureReason || 'Delivery failed',
+        failure_reason: failureReason || 'Delivery failed',
       });
 
       setShowFailModal(false);
