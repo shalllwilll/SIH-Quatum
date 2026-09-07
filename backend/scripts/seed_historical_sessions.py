@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 os.environ.setdefault("MONGO_URI", "mongodb://localhost:27017/logistics_db")
 
-from app.db import get_client, get_db
+from app.db import get_db  # noqa: E402
 
 # 4-Day Historical Trend Dataset (improving SLA compliance & fuel efficiency)
 HISTORICAL_SESSIONS: list[dict[str, Any]] = [

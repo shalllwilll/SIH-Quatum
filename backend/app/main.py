@@ -42,6 +42,7 @@ if missing_vars:
 # DB import deferred until after env validation above
 from app.db import apply_collection_validators, ping_db  # noqa: E402
 from app.routers import (  # noqa: E402
+    analytics_router,
     auth_router,
     delivery_events_router,
     driver_router,
@@ -149,3 +150,4 @@ app.include_router(vehicles_router)
 app.include_router(routing_sessions_router)
 app.include_router(delivery_events_router)
 app.include_router(driver_router)
+app.include_router(analytics_router)
