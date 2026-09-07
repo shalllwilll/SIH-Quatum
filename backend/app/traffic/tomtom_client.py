@@ -36,7 +36,7 @@ class TomTomClient:
     """Async client for querying TomTom Traffic Flow APIs."""
 
     def __init__(self, api_key: str | None = None, timeout_sec: float = 5.0):
-        self.api_key = api_key or os.environ.get("TOMTOM_API_KEY", "")
+        self.api_key = api_key if api_key is not None else os.environ.get("TOMTOM_API_KEY", "")
         self.timeout_sec = timeout_sec
 
     def is_configured(self) -> bool:
