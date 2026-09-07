@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class VehicleStatus(StrEnum):
@@ -39,9 +39,24 @@ class VehicleCreate(VehicleBase):
     """Request schema for creating a vehicle."""
 
 
+class VehicleUpdate(BaseModel):
+    """Request schema for partial vehicle updates."""
+
+    label: str | None = Field(None, min_length=1, description="Human-readable vehicle label")
+    capacity_kg: float | None = Field(None, gt=0.0, description="Maximum load capacity in kilograms")
+    status: VehicleStatus | None = Field(None, description="Updated vehicle status")
+    driver_id: str | None = Field(None, description="Assigned driver account ID")
+    current_warehouse_id: str | None = Field(None, description="Assigned warehouse ObjectId")
+
+
 class Vehicle(VehicleBase):
     """Full vehicle document as stored in MongoDB."""
 
-    id: str | None = Field(None, alias="_id", description="MongoDB ObjectId as string")
+    id: str | None = Field(
+        None,
+        validation_alias=AliasChoices("_id", "id"),
+        serialization_alias="id",
+        description="MongoDB ObjectId as string",
+    )
 
     model_config = {"populate_by_name": True}

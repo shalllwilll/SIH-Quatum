@@ -1,9 +1,26 @@
+"""
+backend/app/main.py — FastAPI Application Entrypoint
+
+Configures:
+- Lifespan management (MongoDB connectivity check and $jsonSchema application)
+- CORS locked to known frontend origins (admin: 5173, driver: 5174)
+- Consistent error response formatting ({"error": "...", "detail": "..."})
+- Core REST API routers: Warehouses, Parcels, Vehicles
+"""
+
+from __future__ import annotations
+
+import http
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # Determine base directory and look for .env file
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -24,6 +41,7 @@ if missing_vars:
 
 # DB import deferred until after env validation above
 from app.db import apply_collection_validators, ping_db  # noqa: E402
+from app.routers import parcels_router, vehicles_router, warehouses_router  # noqa: E402
 
 
 @asynccontextmanager
@@ -36,19 +54,17 @@ async def lifespan(application: FastAPI):
       - Applies $jsonSchema validators to all 5 core collections (idempotent).
 
     On shutdown:
-      - No action required (Motor client manages its own connection pool lifecycle).
+      - Motor handles connection pool closure.
     """
     try:
         await ping_db()
     except RuntimeError as exc:
-        # Re-raise so uvicorn surfaces the error clearly at startup
         raise RuntimeError(
             f"Startup aborted — MongoDB unreachable: {exc}"
         ) from exc
 
     await apply_collection_validators()
     yield
-    # Shutdown: nothing to clean up; Motor handles connection pool closure
 
 
 app = FastAPI(
@@ -58,25 +74,66 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS configuration locked to known frontend origins (spec §10)
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+]
 
-@app.get("/health")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Consistent error response formatting
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Format HTTP exceptions into consistent error response shape."""
+    status_phrase = (
+        http.HTTPStatus(exc.status_code).phrase
+        if exc.status_code in http.HTTPStatus._value2member_map_
+        else "HTTP Error"
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": status_phrase, "detail": exc.detail},
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Format Pydantic validation errors into consistent error response shape."""
+    return JSONResponse(
+        status_code=422,
+        content={"error": "Validation Error", "detail": jsonable_encoder(exc.errors())},
+    )
+
+
+# Health check endpoints
+@app.get("/health", tags=["Health"])
 def health_check():
     """Health check endpoint to verify backend service status."""
     return {"status": "ok"}
 
 
-@app.get("/health/db")
+@app.get("/health/db", tags=["Health"])
 async def health_db():
-    """
-    Database connectivity health check.
-
-    Returns {"status": "ok", "db": "connected"} on success.
-    Returns 503 with an error detail on MongoDB connectivity failure.
-    """
-    from fastapi import HTTPException
-
+    """Database connectivity health check."""
     try:
         await ping_db()
         return {"status": "ok", "db": "connected"}
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+# Core CRUD Routers
+app.include_router(warehouses_router)
+app.include_router(parcels_router)
+app.include_router(vehicles_router)

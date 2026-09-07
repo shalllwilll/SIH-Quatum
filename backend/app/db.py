@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 
@@ -44,8 +45,24 @@ def _make_client() -> AsyncIOMotorClient:
 
 
 def get_client() -> AsyncIOMotorClient:
-    """Return the shared Motor client, creating it if necessary."""
-    global _client
+    """Return the shared Motor client, re-creating it if the event loop changed or closed."""
+    global _client, _db
+    current_loop = None
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+
+    if _client is not None:
+        try:
+            client_loop = _client.get_io_loop()
+            if client_loop.is_closed() or (current_loop is not None and client_loop is not current_loop):
+                _client = None
+                _db = None
+        except Exception:
+            _client = None
+            _db = None
+
     if _client is None:
         _client = _make_client()
     return _client
@@ -60,11 +77,10 @@ def get_db(db_name: str | None = None) -> AsyncIOMotorDatabase:
                  database portion of MONGO_URI, falling back to 'logistics_db'.
     """
     global _db
-    if _db is None or db_name is not None:
-        client = get_client()
-        if db_name:
-            return client[db_name]
-        # Extract DB name from URI, fall back to 'logistics_db'
+    client = get_client()
+    if db_name:
+        return client[db_name]
+    if _db is None:
         uri = os.environ.get("MONGO_URI", "")
         parsed_db = uri.rstrip("/").rsplit("/", 1)[-1].split("?")[0]
         resolved_name = parsed_db if parsed_db else "logistics_db"

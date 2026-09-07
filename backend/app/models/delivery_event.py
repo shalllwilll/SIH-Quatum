@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class DeliveryStatus(StrEnum):
@@ -52,6 +52,11 @@ class DeliveryEventCreate(DeliveryEventBase):
 class DeliveryEvent(DeliveryEventBase):
     """Full delivery event document as stored in MongoDB."""
 
-    id: str | None = Field(None, alias="_id", description="MongoDB ObjectId as string")
+    id: str | None = Field(
+        None,
+        validation_alias=AliasChoices("_id", "id"),
+        serialization_alias="id",
+        description="MongoDB ObjectId as string",
+    )
 
     model_config = {"populate_by_name": True}

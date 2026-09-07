@@ -8,7 +8,7 @@ Units (spec §3a):
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class WarehouseBase(BaseModel):
@@ -29,6 +29,11 @@ class WarehouseCreate(WarehouseBase):
 class Warehouse(WarehouseBase):
     """Full warehouse document as stored in MongoDB."""
 
-    id: str | None = Field(None, alias="_id", description="MongoDB ObjectId as string")
+    id: str | None = Field(
+        None,
+        validation_alias=AliasChoices("_id", "id"),
+        serialization_alias="id",
+        description="MongoDB ObjectId as string",
+    )
 
     model_config = {"populate_by_name": True}

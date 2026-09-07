@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
 class ParcelStatus(StrEnum):
@@ -61,6 +61,11 @@ class ParcelCreate(ParcelBase):
 class Parcel(ParcelBase):
     """Full parcel document as stored in MongoDB."""
 
-    id: str | None = Field(None, alias="_id", description="MongoDB ObjectId as string")
+    id: str | None = Field(
+        None,
+        validation_alias=AliasChoices("_id", "id"),
+        serialization_alias="id",
+        description="MongoDB ObjectId as string",
+    )
 
     model_config = {"populate_by_name": True}
