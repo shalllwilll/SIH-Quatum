@@ -39,12 +39,26 @@ PRESETS: Final[dict[str, CostWeights]] = {
 }
 
 
+_PRESET_ALIASES: Final[dict[str, str]] = {
+    "min_distance": "minimize_distance",
+    "minimize_distance": "minimize_distance",
+    "min_cost_fuel": "minimize_cost_fuel",
+    "min_fuel": "minimize_cost_fuel",
+    "minimize_fuel": "minimize_cost_fuel",
+    "minimize_cost_fuel": "minimize_cost_fuel",
+    "prioritize_sla": "prioritize_sla",
+    "sla": "prioritize_sla",
+    "sla_priority": "prioritize_sla",
+    "balanced": "balanced",
+}
+
+
 def get_preset_weights(preset_name: str) -> CostWeights:
     """
     Retrieve weight preset by name.
 
     Args:
-        preset_name: One of 'minimize_distance', 'minimize_cost_fuel', 'prioritize_sla', 'balanced'.
+        preset_name: One of 'minimize_distance', 'minimize_cost_fuel', 'prioritize_sla', 'balanced' (or aliases).
 
     Returns:
         CostWeights named tuple.
@@ -53,11 +67,12 @@ def get_preset_weights(preset_name: str) -> CostWeights:
         KeyError: If preset_name is not found.
     """
     normalized_key = preset_name.strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized_key not in PRESETS:
+    target_key = _PRESET_ALIASES.get(normalized_key, normalized_key)
+    if target_key not in PRESETS:
         raise KeyError(
             f"Unknown preset: '{preset_name}'. Valid presets are: {list(PRESETS.keys())}"
         )
-    return PRESETS[normalized_key]
+    return PRESETS[target_key]
 
 
 # ---------------------------------------------------------------------------
