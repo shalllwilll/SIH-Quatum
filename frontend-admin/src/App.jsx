@@ -4,6 +4,8 @@ import Login from './pages/Login';
 import Layout from './pages/Layout';
 import FleetOverview from './pages/FleetOverview';
 
+import RouteAssignment from './pages/RouteAssignment';
+
 function MainApp() {
   const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
@@ -15,12 +17,7 @@ function MainApp() {
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
       {activeTab === 'overview' && <FleetOverview />}
-      {activeTab === 'routing' && (
-        <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2>Route Assignment</h2>
-          <p style={{ color: 'var(--text-muted)' }}>Routing Optimization interface loading...</p>
-        </div>
-      )}
+      {activeTab === 'routing' && <RouteAssignment />}
       {activeTab === 'vehicles' && (
         <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
           <h2>Vehicles & Drivers</h2>
