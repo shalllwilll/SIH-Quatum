@@ -13,6 +13,11 @@ from app.qga.chromosome import (
     validate_chromosome,
 )
 from app.qga.decoder import decode_chromosome
+from app.qga.fitness import (
+    calculate_qga_fitness,
+    capacity_penalty,
+    load_imbalance_penalty,
+)
 
 __all__ = [
     "BreakGene",
@@ -20,7 +25,11 @@ __all__ = [
     "Gene",
     "GeneType",
     "StopGene",
+    "calculate_qga_fitness",
+    "capacity_penalty",
     "decode_chromosome",
     "generate_random_chromosome",
+    "load_imbalance_penalty",
     "validate_chromosome",
 ]
+
