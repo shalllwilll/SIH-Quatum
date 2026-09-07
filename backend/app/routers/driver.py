@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from app.auth.middleware import require_driver
 from app.db import get_db
+from app.simulation.clock import sim_clock
+from app.simulation.position_interpolator import interpolate_vehicle_position
 
 router = APIRouter(prefix="/driver", tags=["Driver"])
 
@@ -111,7 +113,7 @@ async def get_driver_manifest(driver_user: Annotated[dict[str, Any], Depends(req
 
 @router.get("/position")
 async def get_driver_position(driver_user: Annotated[dict[str, Any], Depends(require_driver)]):
-    """Fetch current position for the logged-in driver's vehicle only."""
+    """Fetch current position for the logged-in driver's vehicle only (Milestone 9.1)."""
     driver_id = driver_user.get("sub", driver_user.get("id", "driver1"))
     vehicle_label = driver_user.get("vehicle_label", "Van-1")
 
@@ -124,11 +126,63 @@ async def get_driver_position(driver_user: Annotated[dict[str, Any], Depends(req
             detail=f"No vehicle found for driver '{driver_id}' ({vehicle_label}).",
         )
 
+    # Fetch active assignment
+    session = await db["routing_sessions"].find_one(
+        {"status": "completed"},
+        sort=[("created_at", -1)],
+    )
+
+    assignment = None
+    if session:
+        for a in session.get("vehicle_assignments", []):
+            if a.get("vehicle_id") == vehicle_label:
+                assignment = a
+                break
+
+    # Warehouse & Stops coords
+    wh_doc = await db["warehouses"].find_one()
+    wh_coords = (wh_doc.get("lat", 18.5204), wh_doc.get("lon", 73.8567)) if wh_doc else (18.5204, 73.8567)
+
+    parcels_cursor = db["parcels"].find()
+    parcels_docs = await parcels_cursor.to_list(length=300)
+    stops_coords: dict[str, tuple[float, float]] = {}
+    for p in parcels_docs:
+        key = str(p.get("_id", p.get("parcel_id", "P-UNKNOWN")))
+        stops_coords[key] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+        if "parcel_id" in p:
+            stops_coords[str(p["parcel_id"])] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+
+    current_sim_time = sim_clock.get_current_time_min()
+
+    if assignment:
+        interp = interpolate_vehicle_position(
+            assignment=assignment,
+            stops_coords=stops_coords,
+            warehouse_coords=wh_coords,
+            current_time_min=current_sim_time,
+        )
+        return {
+            "vehicle_id": str(veh_doc["_id"]),
+            "label": vehicle_label,
+            "driver_id": driver_id,
+            "lat": interp.lat,
+            "lon": interp.lon,
+            "heading_deg": interp.heading_deg,
+            "speed_kmh": interp.speed_kmh,
+            "status": interp.status,
+            "current_stop_index": interp.current_stop_index,
+            "total_stops": interp.total_stops,
+        }
+
     return {
         "vehicle_id": str(veh_doc["_id"]),
         "label": vehicle_label,
         "driver_id": driver_id,
-        "lat": 18.5204,
-        "lon": 73.8567,
+        "lat": wh_coords[0],
+        "lon": wh_coords[1],
+        "heading_deg": 0.0,
+        "speed_kmh": 0.0,
         "status": veh_doc.get("status", "idle"),
+        "current_stop_index": 0,
+        "total_stops": 0,
     }

@@ -1,7 +1,7 @@
 """
-backend/app/routers/vehicles.py — Milestone 6.1 & 6.3
+backend/app/routers/vehicles.py — Milestone 6.1 & 9.1
 
-CRUD, position polling, and status update endpoints for fleet vehicles.
+CRUD, live accelerated-clock position simulation, and status update endpoints for fleet vehicles.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from app.db import get_db
 from app.models.vehicle import Vehicle, VehicleCreate, VehicleUpdate
+from app.simulation.clock import sim_clock
+from app.simulation.position_interpolator import interpolate_vehicle_position
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
 
@@ -41,6 +43,25 @@ def _doc_to_vehicle(doc: dict[str, Any]) -> Vehicle:
     return Vehicle.model_validate(doc)
 
 
+async def _get_stops_and_warehouse_lookups(db: Any) -> tuple[dict[str, tuple[float, float]], tuple[float, float]]:
+    """Fetch stops coordinates and primary warehouse coordinates."""
+    # Warehouse
+    wh_doc = await db["warehouses"].find_one()
+    wh_coords = (wh_doc.get("lat", 18.5204), wh_doc.get("lon", 73.8567)) if wh_doc else (18.5204, 73.8567)
+
+    # Parcels
+    parcels_cursor = db["parcels"].find()
+    parcels_docs = await parcels_cursor.to_list(length=300)
+    stops_coords: dict[str, tuple[float, float]] = {}
+    for p in parcels_docs:
+        key = str(p.get("_id", p.get("parcel_id", "P-UNKNOWN")))
+        stops_coords[key] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+        if "parcel_id" in p:
+            stops_coords[str(p["parcel_id"])] = (float(p.get("lat", 18.5204)), float(p.get("lon", 73.8567)))
+
+    return stops_coords, wh_coords
+
+
 @router.get("", response_model=list[Vehicle])
 async def list_vehicles():
     """List all fleet vehicles."""
@@ -53,41 +74,78 @@ async def list_vehicles():
 @router.get("/positions", response_model=list[VehiclePosition])
 async def get_all_vehicle_positions():
     """
-    Bulk vehicle positions endpoint for Admin Fleet Overview map polling (spec §6).
+    Bulk vehicle positions endpoint for Admin Fleet Overview map polling (spec §6, Milestone 9.1).
+    Uses the accelerated-clock position interpolator across active route assignments.
     """
     db = get_db()
     cursor = db["vehicles"].find()
-    docs = await cursor.to_list(length=100)
+    veh_docs = await cursor.to_list(length=100)
 
-    # Base coordinates in Pune
-    base_lat = 18.5204
-    base_lon = 73.8567
+    # Fetch latest session with vehicle assignments
+    session = await db["routing_sessions"].find_one(
+        {"status": "completed"},
+        sort=[("created_at", -1)],
+    )
+
+    assignment_map: dict[str, dict[str, Any]] = {}
+    if session:
+        for a in session.get("vehicle_assignments", []):
+            v_key = a.get("vehicle_id")
+            if v_key:
+                assignment_map[v_key] = a
+
+    stops_coords, wh_coords = await _get_stops_and_warehouse_lookups(db)
+    current_sim_time = sim_clock.get_current_time_min()
 
     positions: list[VehiclePosition] = []
-    for idx, doc in enumerate(docs):
+    for idx, doc in enumerate(veh_docs):
         v_id = str(doc["_id"])
         label = doc.get("label", f"Van-{idx+1}")
-        status_val = doc.get("status", "idle")
         driver_id = doc.get("driver_id")
+        db_status = doc.get("status", "idle")
 
-        # Slight spatial offset for distinct vehicle markers
-        offset_lat = ((idx * 7) % 11) * 0.005 - 0.02
-        offset_lon = ((idx * 5) % 13) * 0.005 - 0.02
+        assignment = assignment_map.get(label) or assignment_map.get(v_id)
 
-        positions.append(
-            VehiclePosition(
-                vehicle_id=v_id,
-                label=label,
-                lat=round(base_lat + offset_lat, 5),
-                lon=round(base_lon + offset_lon, 5),
-                heading_deg=float((idx * 45) % 360),
-                speed_kmh=28.0 if status_val in ("en_route", "delivering") else 0.0,
-                status=status_val,
-                driver_id=driver_id,
-                current_stop_index=1,
-                total_stops=8,
+        if assignment:
+            # Interpolate position along real assigned route legs
+            interp = interpolate_vehicle_position(
+                assignment=assignment,
+                stops_coords=stops_coords,
+                warehouse_coords=wh_coords,
+                current_time_min=current_sim_time,
             )
-        )
+            positions.append(
+                VehiclePosition(
+                    vehicle_id=v_id,
+                    label=label,
+                    lat=interp.lat,
+                    lon=interp.lon,
+                    heading_deg=interp.heading_deg,
+                    speed_kmh=interp.speed_kmh,
+                    status=interp.status,
+                    driver_id=driver_id,
+                    current_stop_index=interp.current_stop_index,
+                    total_stops=interp.total_stops,
+                )
+            )
+        else:
+            # Fallback staged coordinate for unassigned vehicles
+            offset_lat = ((idx * 7) % 11) * 0.005 - 0.02
+            offset_lon = ((idx * 5) % 13) * 0.005 - 0.02
+            positions.append(
+                VehiclePosition(
+                    vehicle_id=v_id,
+                    label=label,
+                    lat=round(wh_coords[0] + offset_lat, 5),
+                    lon=round(wh_coords[1] + offset_lon, 5),
+                    heading_deg=float((idx * 45) % 360),
+                    speed_kmh=28.0 if db_status in ("en_route", "delivering") else 0.0,
+                    status=db_status,
+                    driver_id=driver_id,
+                    current_stop_index=0,
+                    total_stops=0,
+                )
+            )
 
     return positions
 
@@ -104,7 +162,7 @@ async def create_vehicle(vehicle_in: VehicleCreate):
 
 @router.get("/{vehicle_id}/position", response_model=VehiclePosition)
 async def get_single_vehicle_position(vehicle_id: str):
-    """Fetch live simulated position for a single vehicle."""
+    """Fetch live simulated position for a single vehicle (Milestone 9.1)."""
     db = get_db()
     try:
         obj_id = ObjectId(vehicle_id)
@@ -120,20 +178,56 @@ async def get_single_vehicle_position(vehicle_id: str):
 
     v_id = str(doc["_id"])
     label = doc.get("label", "Van-1")
-    status_val = doc.get("status", "idle")
     driver_id = doc.get("driver_id")
+    db_status = doc.get("status", "idle")
+
+    # Fetch assignment
+    session = await db["routing_sessions"].find_one(
+        {"status": "completed"},
+        sort=[("created_at", -1)],
+    )
+
+    assignment = None
+    if session:
+        for a in session.get("vehicle_assignments", []):
+            if a.get("vehicle_id") in (label, v_id):
+                assignment = a
+                break
+
+    stops_coords, wh_coords = await _get_stops_and_warehouse_lookups(db)
+    current_sim_time = sim_clock.get_current_time_min()
+
+    if assignment:
+        interp = interpolate_vehicle_position(
+            assignment=assignment,
+            stops_coords=stops_coords,
+            warehouse_coords=wh_coords,
+            current_time_min=current_sim_time,
+        )
+        return VehiclePosition(
+            vehicle_id=v_id,
+            label=label,
+            lat=interp.lat,
+            lon=interp.lon,
+            heading_deg=interp.heading_deg,
+            speed_kmh=interp.speed_kmh,
+            status=interp.status,
+            driver_id=driver_id,
+            current_stop_index=interp.current_stop_index,
+            total_stops=interp.total_stops,
+        )
 
     return VehiclePosition(
         vehicle_id=v_id,
         label=label,
-        lat=18.5204,
-        lon=73.8567,
-        heading_deg=90.0,
-        speed_kmh=25.0 if status_val in ("en_route", "delivering") else 0.0,
-        status=status_val,
+        lat=wh_coords[0],
+        lon=wh_coords[1],
+        heading_deg=0.0,
+        speed_kmh=25.0 if db_status in ("en_route", "delivering") else 0.0,
+        status=db_status,
         driver_id=driver_id,
-        current_stop_index=1,
-        total_stops=6,
+        current_stop_index=0,
+        total_stops=0,
     )
 
 
