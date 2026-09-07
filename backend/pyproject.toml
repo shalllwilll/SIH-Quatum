@@ -22,6 +22,7 @@ known-first-party = ["app"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+asyncio_mode = "auto"
 filterwarnings = [
     # Internal anyio/starlette deprecation — not our code; suppress until libs update
     "ignore::DeprecationWarning:anyio.*",
