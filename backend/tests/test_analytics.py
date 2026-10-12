@@ -72,13 +72,15 @@ async def test_analytics_fuel_efficiency_and_sla(client: AsyncClient):
     session_id = str(s_res.inserted_id)
 
     # Pre-seed delivery events
+    now_wall = time.time()
     events = [
-        {"routing_session_id": session_id, "vehicle_id": "Van-1", "status": "delivered", "is_late": False},
-        {"routing_session_id": session_id, "vehicle_id": "Van-1", "status": "delivered", "is_late": True},
-        {"routing_session_id": session_id, "vehicle_id": "Van-2", "status": "delivered", "is_late": False},
-        {"routing_session_id": session_id, "vehicle_id": "Van-2", "status": "failed", "is_late": False},
+        {"routing_session_id": session_id, "vehicle_id": "Van-1", "parcel_id": "P-1", "status": "delivered", "is_late": False, "recorded_at_min": 600, "recorded_at_wall": now_wall},
+        {"routing_session_id": session_id, "vehicle_id": "Van-1", "parcel_id": "P-2", "status": "delivered", "is_late": True, "recorded_at_min": 650, "recorded_at_wall": now_wall},
+        {"routing_session_id": session_id, "vehicle_id": "Van-2", "parcel_id": "P-3", "status": "delivered", "is_late": False, "recorded_at_min": 620, "recorded_at_wall": now_wall},
+        {"routing_session_id": session_id, "vehicle_id": "Van-2", "parcel_id": "P-4", "status": "failed", "is_late": False, "recorded_at_min": 660, "recorded_at_wall": now_wall},
     ]
     await db["delivery_events"].insert_many(events)
+
 
     # 1. Fuel efficiency trend
     res_fuel = await client.get("/analytics/fuel-efficiency")

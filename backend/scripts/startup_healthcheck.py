@@ -13,15 +13,16 @@ import os
 import sys
 from pathlib import Path
 
+# Add backend directory to sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from app.db import get_db, ping_db
 from app.graph.loader import DEFAULT_GRAPH_PATH
 
-# Add backend directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 async def run_healthcheck() -> bool:

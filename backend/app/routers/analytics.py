@@ -29,6 +29,9 @@ class FuelEfficiencyPoint(BaseModel):
     total_distance_km: float
     fuel_efficiency_score: float
     estimated_fuel_liters: float
+    sla_compliance_pct: float | None = None
+    carbon_emissions_kg: float | None = None
+    day_label: str | None = None
 
 
 class SlaComplianceSummary(BaseModel):
@@ -82,7 +85,12 @@ async def get_fuel_efficiency_trend():
     """
     db = get_db()
     pipeline = [
-        {"$match": {"status": {"$in": ["completed", "assigned"]}}},
+        {
+            "$match": {
+                "status": {"$in": ["completed", "assigned"]},
+                "$or": [{"preview": {"$exists": False}}, {"preview": False}],
+            }
+        },
         {"$sort": {"created_at": 1}},
         {
             "$project": {
@@ -90,7 +98,12 @@ async def get_fuel_efficiency_trend():
                 "timestamp": "$created_at",
                 "preset": "$preset",
                 "total_distance_km": {"$ifNull": ["$total_distance_km", 0.0]},
+                "sla_compliance_pct": {"$ifNull": ["$sla_compliance_pct", 95.0]},
                 "fuel_efficiency_score": {"$ifNull": ["$metadata.fuel_efficiency_score", 75.0]},
+                "fuel_consumed_l": "$metadata.fuel_consumed_l",
+                "carbon_emissions_kg": "$metadata.carbon_emissions_kg",
+                "session_label": "$metadata.session_label",
+                "day_label": "$metadata.day_label",
             }
         },
     ]
@@ -101,8 +114,10 @@ async def get_fuel_efficiency_trend():
     results: list[FuelEfficiencyPoint] = []
     for d in docs:
         dist = float(d.get("total_distance_km", 0.0))
-        # Estimate fuel: ~0.12 liters / km in urban Pune stop-and-go traffic
-        est_liters = round(dist * 0.12, 2)
+        est_liters = float(d.get("fuel_consumed_l") or round(dist * 0.12, 2))
+        est_co2 = float(d.get("carbon_emissions_kg") or round(est_liters * 2.64, 2))
+        sla = float(d.get("sla_compliance_pct", 95.0))
+        day_lbl = d.get("session_label") or d.get("day_label")
         results.append(
             FuelEfficiencyPoint(
                 session_id=d["session_id"],
@@ -110,7 +125,10 @@ async def get_fuel_efficiency_trend():
                 preset=d.get("preset", "balanced"),
                 total_distance_km=round(dist, 2),
                 fuel_efficiency_score=float(d.get("fuel_efficiency_score", 75.0)),
-                estimated_fuel_liters=est_liters,
+                estimated_fuel_liters=round(est_liters, 2),
+                sla_compliance_pct=round(sla, 1),
+                carbon_emissions_kg=round(est_co2, 2),
+                day_label=day_lbl,
             )
         )
 
@@ -214,7 +232,16 @@ async def get_constraint_violations():
     Historical constraint-violation history (capacity overruns and SLA misses).
     """
     db = get_db()
-    cursor = db["routing_sessions"].find({"status": {"$in": ["completed", "assigned"]}}).sort("created_at", 1)
+    cursor = (
+        db["routing_sessions"]
+        .find(
+            {
+                "status": {"$in": ["completed", "assigned"]},
+                "$or": [{"preview": {"$exists": False}}, {"preview": False}],
+            }
+        )
+        .sort("created_at", 1)
+    )
     docs = await cursor.to_list(length=100)
 
     violations: list[ViolationRecord] = []
@@ -243,7 +270,12 @@ async def get_vehicle_performance():
     Historical performance metrics aggregated per fleet vehicle.
     """
     db = get_db()
-    cursor = db["routing_sessions"].find({"status": {"$in": ["completed", "assigned"]}})
+    cursor = db["routing_sessions"].find(
+        {
+            "status": {"$in": ["completed", "assigned"]},
+            "$or": [{"preview": {"$exists": False}}, {"preview": False}],
+        }
+    )
     sessions = await cursor.to_list(length=100)
 
     veh_stats: dict[str, dict[str, Any]] = {}

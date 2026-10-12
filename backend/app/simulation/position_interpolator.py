@@ -89,6 +89,52 @@ def interpolate_vehicle_position(
             total_stops=total_stops,
         )
 
+    geom = assignment.get("route_geometry", [])
+    
+    # Pre-calculate active driving times for polyline interpolation
+    total_active_time = 0.0
+    if geom and len(geom) > 1:
+        prev_d = dep_time
+        for stop in stop_arrivals:
+            arr = float(stop.get("arrival_time_min", prev_d))
+            total_active_time += max(0.0, arr - prev_d)
+            prev_d = float(stop.get("departure_time_min", arr + 5.0))
+        total_active_time += max(0.0, ret_time - prev_d)
+
+    def get_snapped_coords(curr_time: float) -> tuple[float, float, float] | None:
+        """Return (lat, lon, heading) based on polyline progress, or None if fallback."""
+        if not geom or len(geom) < 2 or total_active_time <= 0:
+            return None
+        active_time_so_far = 0.0
+        prev_d_inner = dep_time
+        for s in stop_arrivals:
+            arr_inner = float(s.get("arrival_time_min", prev_d_inner))
+            dep_inner = float(s.get("departure_time_min", arr_inner + 5.0))
+            if curr_time < arr_inner:
+                active_time_so_far += max(0.0, curr_time - prev_d_inner)
+                break
+            else:
+                active_time_so_far += max(0.0, arr_inner - prev_d_inner)
+                if curr_time <= dep_inner:
+                    break
+            prev_d_inner = dep_inner
+        else:
+            active_time_so_far += max(0.0, curr_time - prev_d_inner)
+            
+        P = min(1.0, max(0.0, active_time_so_far / total_active_time))
+        idx_f = P * (len(geom) - 1)
+        idx = int(idx_f)
+        idx_next = min(idx + 1, len(geom) - 1)
+        progress_segment = idx_f - idx
+        
+        c_lat = geom[idx][0] + progress_segment * (geom[idx_next][0] - geom[idx][0])
+        c_lon = geom[idx][1] + progress_segment * (geom[idx_next][1] - geom[idx][1])
+        if idx == idx_next:
+            h = 0.0
+        else:
+            h = calculate_bearing_deg(geom[idx][0], geom[idx][1], geom[idx_next][0], geom[idx_next][1])
+        return (c_lat, c_lon, h)
+
     # Case 3: Vehicle is actively executing route legs
     prev_coords = (wh_lat, wh_lon)
     prev_dep_time = dep_time
@@ -101,7 +147,6 @@ def interpolate_vehicle_position(
 
         stop_lat_lon = stops_coords.get(stop_id)
         if not stop_lat_lon:
-            # Fallback coordinate offset
             hash_val = sum(ord(c) for c in stop_id)
             stop_lat_lon = (
                 wh_lat + (((hash_val * 7) % 30) - 15) * 0.003,
@@ -112,12 +157,15 @@ def interpolate_vehicle_position(
 
         # Leg 3A: En-route between previous location and this stop
         if current_time_min < arr_time:
-            time_delta = max(0.001, arr_time - prev_dep_time)
-            progress = max(0.0, min(1.0, (current_time_min - prev_dep_time) / time_delta))
-
-            curr_lat = prev_coords[0] + progress * (target_lat - prev_coords[0])
-            curr_lon = prev_coords[1] + progress * (target_lon - prev_coords[1])
-            heading = calculate_bearing_deg(prev_coords[0], prev_coords[1], target_lat, target_lon)
+            snapped = get_snapped_coords(current_time_min)
+            if snapped:
+                curr_lat, curr_lon, heading = snapped
+            else:
+                time_delta = max(0.001, arr_time - prev_dep_time)
+                progress = max(0.0, min(1.0, (current_time_min - prev_dep_time) / time_delta))
+                curr_lat = prev_coords[0] + progress * (target_lat - prev_coords[0])
+                curr_lon = prev_coords[1] + progress * (target_lon - prev_coords[1])
+                heading = calculate_bearing_deg(prev_coords[0], prev_coords[1], target_lat, target_lon)
 
             return InterpolatedPosition(
                 lat=round(curr_lat, 6),
@@ -141,17 +189,19 @@ def interpolate_vehicle_position(
                 total_stops=total_stops,
             )
 
-        # Advance to next stop
         prev_coords = (target_lat, target_lon)
         prev_dep_time = stop_dep_time
 
     # Leg 3C: Return leg from last stop back to warehouse
-    time_delta = max(0.001, ret_time - prev_dep_time)
-    progress = max(0.0, min(1.0, (current_time_min - prev_dep_time) / time_delta))
-
-    curr_lat = prev_coords[0] + progress * (wh_lat - prev_coords[0])
-    curr_lon = prev_coords[1] + progress * (wh_lon - prev_coords[1])
-    heading = calculate_bearing_deg(prev_coords[0], prev_coords[1], wh_lat, wh_lon)
+    snapped = get_snapped_coords(current_time_min)
+    if snapped:
+        curr_lat, curr_lon, heading = snapped
+    else:
+        time_delta = max(0.001, ret_time - prev_dep_time)
+        progress = max(0.0, min(1.0, (current_time_min - prev_dep_time) / time_delta))
+        curr_lat = prev_coords[0] + progress * (wh_lat - prev_coords[0])
+        curr_lon = prev_coords[1] + progress * (wh_lon - prev_coords[1])
+        heading = calculate_bearing_deg(prev_coords[0], prev_coords[1], wh_lat, wh_lon)
 
     return InterpolatedPosition(
         lat=round(curr_lat, 6),

@@ -45,10 +45,14 @@ from app.db import apply_collection_validators, ping_db  # noqa: E402
 from app.routers import (  # noqa: E402
     analytics_router,
     auth_router,
+    comparison_router,
     delivery_events_router,
+    demo_scenario_router,
     driver_router,
     parcels_router,
+    routing_geometry_router,
     routing_sessions_router,
+    simulation_router,
     traffic_router,
     vehicles_router,
     warehouses_router,
@@ -174,3 +178,7 @@ app.include_router(delivery_events_router)
 app.include_router(driver_router)
 app.include_router(analytics_router)
 app.include_router(websocket_router)
+app.include_router(routing_geometry_router)
+app.include_router(demo_scenario_router)
+app.include_router(comparison_router)
+app.include_router(simulation_router)

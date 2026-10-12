@@ -31,7 +31,7 @@ class SimulationClock:
             acceleration_ratio: Multiplier (e.g. 60.0 means 1 real second = 1 sim minute).
         """
         if acceleration_ratio is None:
-            env_val = os.getenv("CLOCK_ACCELERATION_RATIO", os.getenv("SIMULATION_CLOCK_SPEED", "60.0"))
+            env_val = os.getenv("SIMULATION_SPEED_MULTIPLIER", os.getenv("SIMULATION_CLOCK_SPEED", "60.0"))
             try:
                 acceleration_ratio = float(env_val)
             except ValueError:

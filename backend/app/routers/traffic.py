@@ -46,6 +46,12 @@ async def get_traffic_status() -> TrafficStatusResponse:
     manager = get_traffic_manager()
     readings = manager.get_current_readings()
 
+    # Prioritize simulated disturbances and high congestion corridors at top of telemetry
+    sorted_readings = sorted(
+        readings,
+        key=lambda r: (0 if r.source == "simulated_disturbance" else (1 if r.congestion_ratio > 1.3 else 2)),
+    )
+
     sample_items = [
         SegmentReadingModel(
             segment_id=r.segment_id,
@@ -56,8 +62,9 @@ async def get_traffic_status() -> TrafficStatusResponse:
             congestion_ratio=round(r.congestion_ratio, 2),
             source=r.source,
         )
-        for r in readings[:10]  # First 10 representative arterial corridors
+        for r in sorted_readings[:12]  # Top representative arterial corridors
     ]
+
 
     return TrafficStatusResponse(
         configured=manager.client.is_configured(),

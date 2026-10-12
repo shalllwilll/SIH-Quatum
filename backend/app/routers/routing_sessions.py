@@ -74,16 +74,109 @@ class AssignRoutesResponse(BaseModel):
     assigned_parcels_count: int
 
 
+class SessionSummaryResponse(BaseModel):
+    """Summary of a routing session for history table."""
+    
+    session_id: str
+    created_at: float
+    status: str
+    preset: str
+    total_distance_km: float | None
+    sla_compliance_pct: float | None
+    parcel_count: int
+    completed_parcels: int
+    estimated_fuel_liters: float | None = None
+    carbon_emissions_kg: float | None = None
+    day_label: str | None = None
+
+
+@router.get("/", response_model=list[SessionSummaryResponse])
+async def get_all_sessions():
+    """Retrieve all historical routing sessions (excludes comparison preview sessions)."""
+    db = get_db()
+    # Exclude preview sessions — those are comparison previews that haven't been assigned yet
+    cursor = db["routing_sessions"].find(
+        {"$or": [{"preview": {"$exists": False}}, {"preview": False}]}
+    ).sort("created_at", -1)
+    docs = await cursor.to_list(length=100)
+    
+    results = []
+    for doc in docs:
+        assignments = doc.get("vehicle_assignments", [])
+        meta = doc.get("metadata", {})
+        
+        # Calculate parcels
+        assigned_parcels = set()
+        for a in assignments:
+            for s in a.get("stops", []):
+                assigned_parcels.add(s)
+                
+        p_count = meta.get("parcel_count") or len(assigned_parcels) or 55
+        completed = p_count if doc.get("status") == "completed" else 0
+        
+        dist = doc.get("total_distance_km")
+        fuel = meta.get("fuel_consumed_l") or (round(dist * 0.12, 2) if dist is not None else None)
+        co2 = meta.get("carbon_emissions_kg") or (round(fuel * 2.64, 2) if fuel is not None else None)
+        day_lbl = meta.get("session_label") or meta.get("day_label")
+        
+        results.append(SessionSummaryResponse(
+            session_id=str(doc["_id"]),
+            created_at=doc.get("created_at", 0.0),
+            status=doc.get("status", "unknown"),
+            preset=doc.get("preset", "unknown"),
+            total_distance_km=dist,
+            sla_compliance_pct=doc.get("sla_compliance_pct"),
+            parcel_count=p_count,
+            completed_parcels=completed,
+            estimated_fuel_liters=fuel,
+            carbon_emissions_kg=co2,
+            day_label=day_lbl,
+        ))
+    return results
+
+
 async def _execute_pipeline_and_update(
     session_id: ObjectId,
     parcels: list[dict[str, Any]],
     warehouses: list[dict[str, Any]],
-    vehicles: list[str],
+    vehicles: list[dict[str, Any]],
     preset: str,
     max_bounceback_retries: int,
     seed: int | None,
 ):
     """Background or inline worker executing the full pipeline."""
+    import math
+    import random
+    def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        R = 6371.0
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    travel_time_lookup = {}
+    congestion_lookup = {}
+    
+    # Collect all locations
+    locations = []
+    for wh in warehouses:
+        locations.append((wh.get("warehouse_id", "WH-PUNE-001"), wh["lat"], wh["lon"]))
+    for p in parcels:
+        locations.append((p.get("tracking_number") or p.get("parcel_id"), p["lat"], p["lon"]))
+        
+    rng = random.Random(seed or 42)
+    
+    for id1, lat1, lon1 in locations:
+        for id2, lat2, lon2 in locations:
+            if id1 != id2:
+                # 30 km/h average -> 0.5 km/min.
+                dist_km = _haversine(lat1, lon1, lat2, lon2) * 1.3
+                base_time_min = dist_km / 0.5
+                travel_time_lookup[(id1, id2)] = base_time_min
+                
+                # Synthetic congestion map: 1.0 = no traffic, up to 2.5 = heavy traffic
+                congestion_lookup[(id1, id2)] = round(rng.uniform(1.0, 2.5), 2)
+
     db = get_db()
     try:
         pipeline_res = await run_hybrid_routing_pipeline(
@@ -92,6 +185,8 @@ async def _execute_pipeline_and_update(
             vehicles=vehicles,
             preset=preset,
             max_bounceback_retries=max_bounceback_retries,
+            travel_time_lookup=travel_time_lookup,
+            congestion_lookup=congestion_lookup,
             seed=seed,
             persist_to_db=False,  # We update the pre-allocated session record
         )
@@ -175,7 +270,7 @@ async def run_routing_session(req: RoutingRunRequest, background_tasks: Backgrou
     # Fetch vehicles
     veh_cursor = db["vehicles"].find()
     veh_docs = await veh_cursor.to_list(length=50)
-    vehicles = [v.get("label", f"Van-{idx+1}") for idx, v in enumerate(veh_docs)] if veh_docs else [f"Van-{i}" for i in range(1, 4)]
+    vehicles = veh_docs if veh_docs else [{"label": f"Van-{i}", "capacity_parcels": 5} for i in range(1, 4)]
 
     # Pre-allocate session in MongoDB
     session_doc = {
@@ -328,13 +423,13 @@ async def assign_session_routes(session_id: str):
                 {"$set": {"status": "assigned"}},
             )
 
-    # Update session assignment status
+    # Update session assignment status and promote from preview to real session
     await db["routing_sessions"].update_one(
         {"_id": obj_id},
-        {"$set": {"assigned": True, "status": "completed"}},
+        {"$set": {"assigned": True, "status": "completed", "preview": False}},
     )
 
-    # Broadcast routes assigned event
+    # Broadcast routes assigned event and start live simulation
     try:
         from app.routers.websocket import manager
         await manager.broadcast_fleet({
@@ -344,6 +439,18 @@ async def assign_session_routes(session_id: str):
         })
     except Exception:
         pass
+
+    # Start (or restart) the live vehicle simulation engine
+    try:
+        from app.simulation.engine import start_simulation
+        # Re-fetch the doc with updated status to pass full session data
+        updated_doc = await db["routing_sessions"].find_one({"_id": obj_id})
+        if updated_doc:
+            updated_doc["id"] = str(updated_doc.pop("_id", obj_id))
+            await start_simulation(updated_doc)
+    except Exception as sim_err:
+        import logging
+        logging.getLogger(__name__).warning("Could not start simulation: %s", sim_err)
 
     return AssignRoutesResponse(
         session_id=str(doc["_id"]),

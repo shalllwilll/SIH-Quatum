@@ -113,4 +113,30 @@ export const api = {
   refreshTraffic: () => apiRequest('/traffic/refresh', { method: 'POST' }),
   getHealth: () => apiRequest('/health'),
   getDbHealth: () => apiRequest('/health/db'),
+
+  // Demo Scenario & Presets Comparison (SIH)
+  seedScenario: (data) =>
+    apiRequest('/demo/seed-scenario', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  injectTrafficSpike: (data) =>
+    apiRequest('/demo/inject-traffic-spike', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  comparePresets: (data = {}) =>
+    apiRequest('/routing-sessions/compare', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getDemoWarehouses: () => apiRequest('/demo/warehouses'),
+
+  // OSRM Road Geometry Snapping
+  getRoadGeometry: (waypoints) =>
+    apiRequest('/routing/road-geometry', {
+      method: 'POST',
+      body: JSON.stringify({ waypoints }),
+    }),
 };
+

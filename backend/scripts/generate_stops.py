@@ -50,9 +50,9 @@ WAREHOUSES = [
     },
     {
         "warehouse_id": "WH-PUNE-002",
-        "name": "East Logistics Hub - Hadapsar",
-        "lon": 73.9260,
-        "lat": 18.5089,
+        "name": "East Logistics Hub - Viman Nagar / Kharadi",
+        "lon": 73.9242,
+        "lat": 18.5529,
         "operating_hours": {"start_time": 360, "end_time": 1320},
         "active": True,
     },

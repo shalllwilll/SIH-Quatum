@@ -1,36 +1,17 @@
 import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import Login from './pages/Login';
 import Layout from './pages/Layout';
-import FleetOverview from './pages/FleetOverview';
-import RouteAssignment from './pages/RouteAssignment';
-import VehicleManagement from './pages/VehicleManagement';
-import Analytics from './pages/Analytics';
-import Diagnostics from './pages/Diagnostics';
+import ActiveDashboard from './pages/ActiveDashboard';
+import ComparisonDashboard from './pages/ComparisonDashboard';
+import AnalysisDashboard from './pages/AnalysisDashboard';
 
-function MainApp() {
-  const { isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview');
-
-  if (!isAuthenticated) {
-    return <Login />;
-  }
+export default function App() {
+  const [activeTab, setActiveTab] = useState('active');
 
   return (
     <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === 'overview' && <FleetOverview />}
-      {activeTab === 'routing' && <RouteAssignment />}
-      {activeTab === 'vehicles' && <VehicleManagement />}
-      {activeTab === 'analytics' && <Analytics />}
-      {activeTab === 'diagnostics' && <Diagnostics />}
+      {activeTab === 'active' && <ActiveDashboard />}
+      {activeTab === 'comparison' && <ComparisonDashboard setActiveTab={setActiveTab} />}
+      {activeTab === 'analysis' && <AnalysisDashboard />}
     </Layout>
-  );
-}
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
   );
 }
